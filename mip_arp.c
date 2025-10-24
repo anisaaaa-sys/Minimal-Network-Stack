@@ -304,5 +304,5 @@ int arp_cache_lookup(struct arp_entry *entries, int count,
         }
     }
     printf("[ARP] Cache MISS for MIP %d\n", mip);
-    return -1; // not found
+    return -1; // Not found
 }
