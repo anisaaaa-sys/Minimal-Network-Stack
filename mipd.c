@@ -166,7 +166,7 @@ int main(int argc, char *argv[]) {
                         local_if.upper_layers[local_if.upper_layer_count].sdu_type = sdu_type;
                         local_if.upper_layers[local_if.upper_layer_count].active = 1;
 
-                        struct epoll_event uev = { .events = EPOLLIN, .data_fd = client_fd};
+                        struct epoll_event uev = { .events = EPOLLIN, .data.fd = client_fd};
                         epoll_ctl(epollfd, EPOLL_CTL_ADD, client_fd, &uev);
                     }
                 } 
@@ -285,7 +285,7 @@ int main(int argc, char *argv[]) {
                     continue;
                 }
                 uint8_t dest = buffer[0];
-                uint8_t ttl = uint8_t buffer[1];
+                uint8_t ttl = buffer[1];
                 uint8_t *sdu = buffer + 2;
                 size_t sdu_len = (size_t)m - 2;
 

@@ -10,7 +10,7 @@
 /* Send route lookup request to routing daemon */
 void send_route_request(struct ifs_data *ifs, uint8_t dest_mip) {
     if (ifs->routing_daemon_fd < 0) {
-        printf("[FORWARD] No routing daemon connected\n")
+        printf("[FORWARD] No routing daemon connected\n");
         return;
     }
 
@@ -40,7 +40,7 @@ void handle_route_response(struct ifs_data *ifs, const uint8_t *payload, size_t 
     }
 
     if (payload[0] != 0x52 || payload[1] != 0x53 || payload[2] != 0x50) {
-        fprintf(stderr, "[FORWARD] Invalid route response format\n")
+        fprintf(stderr, "[FORWARD] Invalid route response format\n");
         return;
     }
 
@@ -137,7 +137,7 @@ void forward_mip_packet(struct ifs_data *ifs, uint8_t dest_mip, uint8_t src_mip,
 
     // Add to pending forwards
     if (ifs->pending_forward_count < MAX_PENDING_FORWARDS) {
-        struct pending_forward *pf = &ifs->pending_forwards[ifs->pending_ping_count];
+        struct pending_forward *pf = &ifs->pending_forwards[ifs->pending_forward_count];
         pf->dest_mip = dest_mip;
         pf->src_mip = src_mip;
         pf->ttl = ttl;
