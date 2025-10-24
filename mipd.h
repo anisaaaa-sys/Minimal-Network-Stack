@@ -7,6 +7,7 @@
 #include <linux/if_packet.h>	/* struct sockaddr_ll */
 #include <net/if.h>		/* IFNAMSIZ, if_nametoindex */
 #include <sys/socket.h>	/* socket, bind, recvfrom, sendto */
+#include <time.h>
 
 /* Constants */
 #define MAX_EVENTS 10
@@ -16,10 +17,15 @@
 #define MAX_PENDING_CLIENTS 10
 #define MAX_UPPER_LAYERS 8
 #define MAX_PONG_CACHE 8
+#define MAX_PENDING_FORWARDS 20
 
+/* SDU packet types */
 #define SDU_TYPE_ARP 0x01
 #define SDU_TYPE_PING 0x02
 #define SDU_TYPE_ROUTING 0x04
+
+/* Default TTL */
+#define DEFAULT_TTL 15
 
 /* ARP packet types */
 #define ARP_TYPE_REQ 0x00
@@ -29,7 +35,7 @@
 #define ETH_BROADCAST {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 /* Ethertype for MIP (host byte order constant) */
 #define ETH_P_MIP 0x88B5
-
+/* Destination MIP address of the PDU = 0xFF, meaning broadcast */
 #define MIP_DEST_ADDR 0xFF
 
 /* ARP cache entry */
@@ -45,6 +51,13 @@ struct arp_cache {
 	int entry_count;
 };
 
+/* Upper layer client connection */
+struct upper_layer_client {
+	int fd;
+	uint8_t sdu_type;
+	int active;
+};
+
 struct pending_ping {
 	int client_fd;
 	uint8_t dest_mip;
@@ -53,11 +66,16 @@ struct pending_ping {
 	int waiting_for_arp;
 };
 
-struct pending_pong {
-	int used;
+/* Pending forward - waiting for route lookup */
+struct pending_forward {
+	uint8_t dest_mip;
 	uint8_t src_mip;
-	uint8_t pong_message[MAX_SDU_SIZE];
-	size_t pong_len;
+	uint8_t ttl;
+	uint8_t sdu_type;
+	uint8_t sdu[MAX_SDU_SIZE];
+	size_t sdu_len;
+	time_t timestamp;
+	int active;
 };
 
 /* 
@@ -136,6 +154,11 @@ struct ifs_data {
 	struct pending_ping pending_pings[MAX_PENDING_CLIENTS];
 	int pending_ping_count;
 	struct pending_pong pong_cache[MAX_PONG_CACHE];
+	struct upper_layer_client upper_layers[MAX_UPPER_LAYERS];
+	int upper_layer_count;
+	int routing_daemon_fd; // FD of routing daemon connection
+	struct pending_forward pending_forwards[MAX_PENDING_FORWARDS];
+	int pending_forward_count;
 };
 
 /* Function prototypes */
@@ -155,5 +178,11 @@ int handle_unix_connection(struct ifs_data *ifs, int client_fd,
                      	   int debug);
 int arp_cache_lookup(struct arp_entry *entries, int count,  
                 	 uint8_t mip, uint8_t mac[6], int *if_index);
+void forward_mip_packet(struct ifs_data *ifs, uint8_t dest_mip, uint8_t src_mip,
+						uint8_t ttl, uint8_t sdu_type, const uint8_t *sdu,
+						size_t sdu_len);
+void send_route_request(struct ifs_data *ifs, uint8_t dest_mip);
+void handle_route_response(struct ifs_data *ifs, const uint8_t *payload, size_t len);
+int find_upper_layer_client(struct ifs_data *ifs, uint8_t sdu_type);
 
 #endif /* MIPD_H */
