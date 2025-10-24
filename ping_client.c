@@ -22,6 +22,11 @@ int main(int argc, char *argv[]){
     const char *sock_path = argv[1];
     const char *message = argv[2];
     uint8_t dest_mip = (uint8_t)atoi(argv[3]);
+    uint8_t ttl = 0;    // 0 = use default
+    
+    if (argc >= 5) {
+        ttl = (uint8_t)atoi(argv[4]);
+    }
 
     int sockfd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
     if (sockfd < 0) {
@@ -45,12 +50,14 @@ int main(int argc, char *argv[]){
     /* Create PING message */
     uint8_t buffer[MAX_SDU_SIZE];
     buffer[0] = dest_mip;
-    sprintf((char*)(buffer + 1), "PING:%s", message);
-    int ping_len = strlen((char*)buffer + 1);
+    buffer[1] = ttl;
+    sprintf((char*)(buffer + 2), "PING:%s", message);
+    int ping_len = strlen((char*)buffer + 2);
 
-    int total_len = ping_len + 1; // +1 for dest_mip byte
+    int total_len = ping_len + 2; // +2 for dest_mip byte and ttl bytes
 
-    printf("[CLIENT] Sending %d bytes: [%02x] %.*s\n", total_len, buffer[0], ping_len, buffer + 1);
+    printf("[CLIENT] Sending %d bytes: dest=%d, TTL=%d, msg='%.*s'\n", 
+           total_len, dest_mip, ttl, buffer + 2);
 
     struct timeval start_time, end_time;
     gettimeofday(&start_time, NULL);
@@ -78,8 +85,9 @@ int main(int argc, char *argv[]){
 
     if (n > 0) {
         uint8_t reply_src = reply[0];
-        char *reply_msg = (char*)(reply + 1);
-        size_t reply_len = n - 1;
+        uint8_t reply_ttl = reply[1];
+        char *reply_msg = (char*)(reply + 2);
+        size_t reply_len = n - 2;
 
         /* Calculate RTT in milliseconds */
         long rtt_ms = ((end_time.tv_sec - start_time.tv_sec) * 1000) +

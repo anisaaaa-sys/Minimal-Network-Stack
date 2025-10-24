@@ -54,27 +54,30 @@ int main(int argc, char *argv[]) {
         }
 
         uint8_t src_mip = buffer[0];
-        char *msg = (char*)(buffer + 1);
-        size_t msg_len = n - 1;
+        uint8_t src_ttl = buffer[1];
+        char *msg = (char*)(buffer + 2);
+        size_t msg_len = n - 2;
 
-        printf("\n[SERVER] Received %zd bytes: message from MIP %d: %.*s\n", n, src_mip, (int)msg_len, msg);
+        printf("\n[SERVER] Received %zd bytes: message from MIP %d: %.*s (TTL=%d)\n", 
+               n, src_mip, (int)msg_len, msg, src_ttl);
         
         if (msg_len >= 5 && strncmp(msg, "PING:", 5) == 0) {
             uint8_t reply_buffer[MAX_SDU_SIZE];
 
             reply_buffer[0] = src_mip;
-            sprintf((char*)(reply_buffer + 1), "PONG:%.*s", (int)(msg_len - 5), msg + 5);
-            int reply_len = strlen((char*)(reply_buffer + 1));
+            reply_buffer[1] = src_ttl;
+            sprintf((char*)(reply_buffer + 2), "PONG:%.*s", (int)(msg_len - 5), msg + 5);
+            int reply_len = strlen((char*)(reply_buffer + 2));
 
-            if (reply_len < 0 || reply_len >= MAX_SDU_SIZE - 1) {
+            if (reply_len < 0 || reply_len >= MAX_SDU_SIZE - 2) {
                 fprintf(stderr, "[SERVER] Reply message too long\n");
                 continue;
             }
 
-            int reply_total_len = reply_len + 1;
+            int reply_total_len = reply_len + 2;
 
-            printf("[SERVER] Sending PONG to MIP %d: %.*s\n", 
-                   src_mip, reply_len, reply_buffer + 1);
+            printf("[SERVER] Sending PONG to MIP %d: %.*s (TTL=%d)\n", 
+                   src_mip, reply_len, reply_buffer + 2, src_ttl);
 
             if (write(sockfd, reply_buffer, reply_total_len) < 0) {
                 perror("send");
