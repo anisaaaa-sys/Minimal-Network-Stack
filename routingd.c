@@ -81,7 +81,7 @@ void handle_route_response(struct ifs_data *ifs, const uint8_t *payload, size_t 
 
         // Send the packet
         int rc = send_mip_packet(ifs, send_if, pf->dest_mip, pf->sdu_type,
-                                 pf->sdu, pf->sdu_len);
+                                 pf->sdu, pf->sdu_len, pf->ttl);
         
         if (rc < 0) {
             fprintf(stderr, "[FORWARD] Failed to forward packet to MIP %d\n", pf->dest_mip);

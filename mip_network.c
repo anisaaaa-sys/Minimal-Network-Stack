@@ -10,12 +10,17 @@
 
 int send_mip_packet(struct ifs_data *ifs, int if_index,
                 uint8_t dst_mip, uint8_t sdu_type, 
-                const uint8_t *sdu, size_t sdu_len_bytes) {
+                const uint8_t *sdu, size_t sdu_len_bytes, uint8_t ttl) {
     if (!ifs) return -1;
     if (sdu == NULL && sdu_len_bytes != 0) return -1;
     if (ifs->ifn <= 0) {
         fprintf(stderr, "send_mip_packet: no interfaces available\n");
         return -1;
+    }
+
+    // Use default TTL if 0
+    if (ttl == 0) {
+        ttl = DEFAULT_TTL;
     }
 
     /* Try to find MAC + if_index from ARP cache */
@@ -87,8 +92,8 @@ int send_mip_packet(struct ifs_data *ifs, int if_index,
         return -1;
     }
 
-    printf("[send_mip_packet] Sending to MIP %u via if=%d, sdu_type=0x%02x, %zu bytes\n", 
-            dst_mip, chosen_if, sdu_type, sdu_len_bytes);
+    printf("[send_mip_packet] Sending to MIP %u via if=%d, TTL=%u, sdu_type=0x%02x, %zu bytes\n", 
+            dst_mip, chosen_if, ttl, sdu_type, sdu_len_bytes);
 
     ssize_t rc = sendmsg(ifs->rsock[chosen_if], &msg, 0);
     if (rc < 0) {
@@ -142,12 +147,35 @@ int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet,
 
     /* Check if packet is for us (or broadcast) */
     if (mip_hdr->dest != ifs->local_mip_addr && mip_hdr->dest != 255) {
-        printf("[handle_mip_packet] Packet not for us (dest %u), dropping\n", 
+        printf("[handle_mip_packet] Packet not for us (dest %u), forwarding...\n", 
                mip_hdr->dest);
+        forward_mip_packet(ifs, mip_hdr->dest, mip_hdr->src, ttl, sdu_type, sdu, sdu_len_bytes);
         return 0;
     }
 
     printf("[handle_mip_packet] Packet is for us\n");
+
+    /* Handle ROUTING packets */
+    if (sdu_type == SDU_TYPE_ROUTING) {
+        if (ifs->routing_daemon_fd >= 0) {
+            // Forward to routing daemon: [src_mip][ttl][payload]
+            uint8_t buffer[MAX_SDU_SIZE];
+            buffer[0] = mip_hdr->src;
+            buffer[1] = ttl;
+
+            size_t copy_len = (sdu_len_bytes < MAX_SDU_SIZE - 2) ?
+                               sdu_len_bytes : (MAX_SDU_SIZE - 2);
+            memcpy(buffer + 2, sdu, copy_len);
+
+            ssize_t sent = send(ifs->routing_daemon_fd, buffer, copy_len + 2, 0);
+                if (sent < 0) {
+                    perror("forward to routing daemon");
+                } else {
+                    printf("[handle_mip_packet] Forwarded to routing daemon\n");
+                }
+            }
+        return 0;
+    }
 
     /* Handle PING/PONG packets */
     if (sdu_type == SDU_TYPE_PING) {
@@ -214,15 +242,16 @@ int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet,
                 return 0;
             }
  
-            /* Send PONG to waiting client: [src_mip][pong_message] */
+            /* Send PONG to waiting client: [src_mip][ttl][pong_message] */
             uint8_t response[MAX_SDU_SIZE];
             response[0] = mip_hdr->src;
+            response[1] = ttl;
             size_t to_copy = actual_len;
-            if (to_copy > sizeof(response) - 1) to_copy = sizeof(response) - 1;
-            memcpy(response + 1, sdu, to_copy);
+            if (to_copy > sizeof(response) - 2) to_copy = sizeof(response) - 2;
+            memcpy(response + 2, sdu, to_copy);
  
             printf("[handle_mip_packet] Sending PONG to client fd=%d\n", target_fd);
-            ssize_t written = write(target_fd, response, to_copy + 1);
+            ssize_t written = write(target_fd, response, to_copy + 2);
             if (written < 0) {
                 perror("write to client");
                 close(target_fd);
@@ -247,15 +276,16 @@ int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet,
                 return 0;
             }
 
-            /* Send to server: [src_mip][ping_message] */
+            /* Send to server: [src_mip][ttl][ping_message] */
             uint8_t response[MAX_SDU_SIZE];
             response[0] = mip_hdr->src;
+            response[1] = ttl;
             size_t to_copy = actual_len;
-            if (to_copy > sizeof(response) - 1) to_copy = sizeof(response) - 1;
-            memcpy(response + 1, sdu, to_copy);
+            if (to_copy > sizeof(response) - 2) to_copy = sizeof(response) - 2;
+            memcpy(response + 2, sdu, to_copy);
 
             printf("[handle_mip_packet] Sending PING to server fd=%d\n", ifs->server_fd);
-            ssize_t written = write(ifs->server_fd, response, to_copy + 1);
+            ssize_t written = write(ifs->server_fd, response, to_copy + 2);
             if (written < 0) {
                 perror("write to server");
                 close(ifs->server_fd);

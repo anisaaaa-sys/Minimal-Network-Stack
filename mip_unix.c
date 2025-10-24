@@ -79,16 +79,19 @@ int handle_unix_connection(struct ifs_data *ifs, int client_fd, int debug) {
         return 0;
     }
 
-    /* First byte is destination MIP address, rest is the message */
-    if (nread < 1) {
+    /* Message format: [dest_mip][ttl][sdu...] */
+    if (nread < 2) {
         fprintf(stderr, "handle_unix_connection: message too short\n");
         close(client_fd);
         return -1;
     }
 
-    uint8_t dest_mip = buffer[0]; // First byte is destination MIP address
-    const uint8_t *sdu = buffer + 1; // Rest is the message
-    size_t sdu_len_bytes = nread - 1;
+    uint8_t dest_mip = buffer[0];       // First byte is destination MIP address
+    uint8_t ttl = buffer[1];            // Second byte is TTL (0 = use default)
+    const uint8_t *sdu = buffer + 2;    // Rest is the message
+    size_t sdu_len_bytes = nread - 2;
+
+    printf("[MIPD RECV CLIENT] nread = %ld, dest=%d, ttl=%d\n", nread, dest_mip, ttl);
 
     // PAD SDU to 32-bit boundary
     size_t padded_sdu_len = ((sdu_len_bytes + 3) / 4) * 4; // Round up to multiple of 4
@@ -111,6 +114,7 @@ int handle_unix_connection(struct ifs_data *ifs, int client_fd, int debug) {
     struct pending_ping *pending = &ifs->pending_pings[ifs->pending_ping_count++];
     pending->client_fd = client_fd;
     pending->dest_mip = dest_mip;
+    pending->ttl = (ttl == 0) ? DEFAULT_TTL : ttl;
     pending->waiting_for_arp = 0;
     if (sdu_len_bytes > MAX_SDU_SIZE) sdu_len_bytes = MAX_SDU_SIZE;
     memcpy(pending->sdu, sdu, sdu_len_bytes);
@@ -150,9 +154,11 @@ int handle_unix_connection(struct ifs_data *ifs, int client_fd, int debug) {
     } else {
         printf("[MIPD] ARP CACHE HIT for MIP %d - using cached MAC\n", dest_mip);
 
-        /* Send the MIP packet */
-        printf("[MIPD] Sending MIP packet to MIP %d via interface %d\n", dest_mip, send_if);
-        int rc = send_mip_packet(ifs, send_if, dest_mip, SDU_TYPE_PING, padded_sdu, padded_sdu_len);
+        /* Send the MIP packet with specified TTL */
+        printf("[MIPD] Sending MIP packet to MIP %d via interface %d (TTL=%d)\n", 
+               dest_mip, send_if, pending->ttl);
+        int rc = send_mip_packet(ifs, send_if, dest_mip, SDU_TYPE_PING, 
+                                 padded_sdu, padded_sdu_len, pending->ttl);
     
         free(padded_sdu);
 
