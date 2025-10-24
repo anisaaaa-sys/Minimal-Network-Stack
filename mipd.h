@@ -1,12 +1,12 @@
 #ifndef MIPD_H
 #define MIPD_H
 
-#include <stdint.h>		/* uint8_t, uint16_t */
-#include <stddef.h>		/* size_t */
-#include <unistd.h>		
+#include <stdint.h>				/* uint8_t, uint16_t */
+#include <stddef.h>				/* size_t */
+#include <unistd.h> 			/* POSIX APIs (close, read, write, usleep) */
 #include <linux/if_packet.h>	/* struct sockaddr_ll */
-#include <net/if.h>		/* IFNAMSIZ, if_nametoindex */
-#include <sys/socket.h>	/* socket, bind, recvfrom, sendto */
+#include <net/if.h>				/* IFNAMSIZ, if_nametoindex */
+#include <sys/socket.h>			/* socket, bind, recvfrom, sendto */
 #include <time.h>
 
 /* Constants */
@@ -86,8 +86,8 @@ struct pending_forward {
 struct ether_frame {
 	uint8_t dst_addr[6];
 	uint8_t src_addr[6];
-	uint16_t eth_proto; /* network byte order is preferred when sending */
-	uint8_t contents[]; /* Flexible array member (C99) */
+	uint16_t eth_proto; 	/* network byte order is preferred when sending */
+	uint8_t contents[]; 	/* Flexible array member (C99) */
 } __attribute__((packed));
 
 /*
@@ -108,7 +108,7 @@ struct mip_header {
 	uint8_t ttl;
 	uint8_t sdu_len;
 	uint8_t sdu_type;
-	uint16_t ttl_sdu; /* packed field: TTL + SDU length + SDU type */
+	uint16_t ttl_sdu; 		/* packed field: TTL + SDU length + SDU type */
 } __attribute__((packed));
 
 /* Bit masks & shifts for the packed 16-bit field (host-side, before htons/ntohs) */
@@ -145,18 +145,18 @@ struct mip_header {
 /* Interface data: up to MAX_IF interfaces */
 struct ifs_data {
 	struct sockaddr_ll addr[MAX_IF];
-	int rsock[MAX_IF];			/* RAW socket used to send/receive frames */
-	uint8_t local_mip_addr;		/* assigned MIP address for this host */
-	int ifn;					/* number of active interfaces */
-	uint8_t macs[MAX_IF][6];	/* cached local MACs per interface (optional helper) */
-	struct arp_cache arp;		/* simple ARP cache */
+	int rsock[MAX_IF];			// RAW socket used to send/receive frames 
+	uint8_t local_mip_addr;		// Assigned MIP address for this host 
+	int ifn;					// Number of active interfaces 
+	uint8_t macs[MAX_IF][6];	// Cached local MACs per interface (optional helper) 
+	struct arp_cache arp;		// Simple ARP cache 
 	int server_fd;
 	struct pending_ping pending_pings[MAX_PENDING_CLIENTS];
 	int pending_ping_count;
 	struct pending_pong pong_cache[MAX_PONG_CACHE];
 	struct upper_layer_client upper_layers[MAX_UPPER_LAYERS];
 	int upper_layer_count;
-	int routing_daemon_fd; // FD of routing daemon connection
+	int routing_daemon_fd; 		// FD of routing daemon connection
 	struct pending_forward pending_forwards[MAX_PENDING_FORWARDS];
 	int pending_forward_count;
 };
