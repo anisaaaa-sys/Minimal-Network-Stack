@@ -135,4 +135,158 @@ void handle_update(struct routing_state *state, uint8_t from_mip,
            from_mip, num_routes);
 
     int offset = 1;
+    for (int i = 0; i < num_routes && offset + 1 < len; i++) {
+        uint8_t dest = data[offset++];
+        uint8_t metric = data[offset++];
+
+        if (dest == state->local_mip) continue; // Skip route to self
+
+        // Distance vector: metric through this neighbor is their metric + 1
+        uint8_t new_metric = (metric >= INFINITY_METRIC) ?
+                              INFINITY_METRIC : (metric + 1);
+        
+        struct route_entry *existing = lookup_route(state, dest);
+
+        if (existing) {
+            // Update if new route is better or if current route goes through from_mip
+            if (new_metric < existing->metric || existing->next_hop == from_mip) {
+                if (new_metric < INFINITY_METRIC) {
+                    existing->next_hop = from_mip;
+                    existing->metric = new_metric;
+                    existing->last_update = time(NULL);
+                    printf("[ROUTING] Updated route to MIP %d via %d (metric %d)\n",
+                            dest, from_mip, new_metric);
+                } else if (existing->next_hop == from_mip) {
+                    // Route became unreachable
+                    existing->valid = 0;
+                    printf("[ROUTING] Route to MIP %d became unreachable\n", dest);
+                }
+            }
+        } else {
+            // New route
+            if (new_metric < INFINITY_METRIC) {
+                add_or_update_route(state, dest, from_mip, new_metric);
+                printf("[ROUTING] Added route to MIP %d via %d (metric %d)\n",
+                        dest, from_mip. new_metric);
+            }
+        }
+    }
+}
+
+void handle_route_request(struct routing_state *state, uint8_t dest_mip) {
+    printf("[ROUTING] Route lookup request for MIP %d\n", dest_mip);
+
+    struct route_entry *route = lookup_route(state, dest_mip);
+
+    // RESPONSE format: [local_mip][ttl=0]['R']['S']['P'][next_hop]
+    uint8_t buffer[6];
+    buffer[0] = state->local_mip;   // Destination (send to self/mipd)
+    buffer[1] = 0;                  // TTL
+    buffer[2] = 0x52;               // 'R'
+    buffer[3] = 0x53;               // 'S'
+    buffer[4] = 0x50;               // 'P'
+
+    if (route && route->valid) {
+        buffer[5] = route->next_hop;
+        printf("[ROUTING] Found route to MIP %d via %d\n", dest_mip, route->next_hop);
+    } else {
+        buffer[5] = 255;    // No route found
+        printf("[ROUTING] No route to MIP %d\n", dest_mip);
+    }
+
+    ssize_t sent = send(state->mip_sock, buffer, 6, 0);
+    if (sent < 0) {
+        perror("handle_route_request: send");
+    }
+}
+
+void update_neighbors(struct routing_state *state) {
+    time_t now = time(NULL);
+
+    for (int i = 0; i < state->neighbor_count; i++) {
+        if (!state->neighbors[i].valid) continue;
+
+        if (now - state->neighbors[i].last_hello > NEIGHBOR_TIMEOUT) {
+            printf("[ROUTING] Neighbor MIP %d timed out\n",
+                    state->neighbors[i].mip_addr);
+            state->neighbors[i].valid = 0;
+
+            // Invalidate routes through this neighbor
+            for (int j = 0; j < state->route_count; j++) {
+                if (state->routes[j].next_hop == state->neighbors[i].mip_addr) {
+                    state->routes[j].valid = 0;
+                }
+            }
+        }
+    }
+}
+
+void update_routes(struct routing_state *state) {
+    time_t now = time(NULL);
+
+    for (int i = 0; i < state->route_count; i++) {
+        if (!state->routes[i].valid) continue;
+        if (state->routes[i].dest == state->local_mip) continue;    // Keep self route
+
+        if (now - state->routes[i].last_update > ROUTE_TIMEOUT) {
+            printf("[ROUTING] Route to MIP %d timed out\n", state->routes[i].dest);
+            state->routes[i].valid = 0;
+        }
+    }
+}
+
+struct route_entry* lookup_route(struct routing_state *state, uint8_t dest) {
+    for (int i = 0; i < state->route_count; i++) {
+        if (state->routes[i].dest == dest && state->routes[i].valid) {
+            return &state->routes[i];
+        }
+    }
+    return NULL;
+}
+
+void add_or_update_route(struct routing_state *state, uint8_t dest, 
+                         uint8_t next_hop, uint8_t metric) {
+    // Try to find existing route
+    for (int i = 0; i < state->route_count; i++) {
+        if (state->routes[i].dest == dest) {
+            state->routes[i].next_hop = next_hop;
+            state->routes[i].metric = metric;
+            state->routes[i].last_update = time(NULL);
+            state->routes[i].valid = 1;
+            return;
+        }
+    }
+
+    // Add new route
+    if (state->route_count < MAX_ROUTES) {
+        state->routes[state->route_count].dest = dest;
+        state->routes[state->route_count].next_hop = next_hop;
+        state->routes[state->route_count].metric = metric;
+        state->routes[state->route_count].last_update = time(NULL);
+        state->routes[state->route_count].valid = 1;
+        state->route_count++;
+    }
+}
+
+void print_routing_table(struct routing_state *state) {
+    printf("\n=== Routing Table (MIP %d) ===\n", state->local_mip);
+    printf("Dest\tNext Hop\tMetric\tAge\n");
+
+    time_t now = time(NULL);
+    int valid_count = 0;
+    for (int i = 0; i < state-route_count; i++) {
+        if (!state->routes[i].valid) continue;
+
+        int age = (int)(now - state->routes[i].last_update);
+        printf("%d\t%d\t\t%d\t%ds\n",
+               state->routes[i].dest,
+               state->routes[i].next_hop,
+               state->routes[i].metric,
+               age);
+        valid_count++;
+    }
+    if (valid_count == 0) {
+        printf("No routes\n");
+    }
+    printf("==============================\n\n")
 }
