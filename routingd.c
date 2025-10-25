@@ -6,6 +6,8 @@
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/time.h>    
+#include <sys/select.h> 
 
 #include "mipd.h"
 #include "routingd.h"
@@ -28,7 +30,7 @@ int main(int argc, char *argv[]) {
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, sock_path, size_of(addr.sun_path) - 1);
+    strncpy(addr.sun_path, sock_path, sizeof(addr.sun_path) - 1);
 
     if (connect(sockfd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("connect");
@@ -110,6 +112,7 @@ int main(int argc, char *argv[]) {
 
             uint8_t src_mip = buffer[0];
             uint8_t ttl = buffer[1];
+            (void)ttl;
             uint8_t *payload = buffer + 2;
             size_t payload_len = nread - 2;
 

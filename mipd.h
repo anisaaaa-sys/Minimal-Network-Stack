@@ -79,6 +79,13 @@ struct pending_forward {
 	int active;
 };
 
+struct pending_pong {
+	int used;
+	uint8_t src_mip;
+	uint8_t pong_message[MAX_SDU_SIZE];
+	size_t pong_len;
+};
+
 /* 
  * Ethernet frame convenience struct.
  * eth_proto is a 16-bit Ethertype in network byte order when placed on the wire.
