@@ -26,7 +26,7 @@ int main(int argc, char *argv[]) {
         arg_idx++;
     }
 
-    const char *sock_path = argv[1];
+    const char *sock_path = argv[arg_idx];
 
     // Connect to MIP daemon
     int sockfd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
@@ -46,7 +46,10 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    printf("[ROUTING] Connected to MIP daemon\n");
+    if (debug) {
+        printf("[ROUTING] Connected to MIP daemon\n");
+        fflush(stdout);
+    }
 
     // Identify as routing daemon
     uint8_t ident = SDU_TYPE_ROUTING;
@@ -71,7 +74,7 @@ int main(int argc, char *argv[]) {
     init_routing_state(&state, local_mip);
     state.mip_sock = sockfd;
 
-    printf("[ROUTING] Routing daemon started for MIP %d\n", local_mip);
+    if (debug) printf("[ROUTING] Routing daemon started for MIP %d\n", local_mip);
 
     // Main loop
     time_t last_print = 0;
@@ -151,7 +154,7 @@ int main(int argc, char *argv[]) {
                 break;
             
             default:
-                printf("[ROUTING] Unknown message type: 0x%02x\n", msg_type);
+                if (debug) printf("[ROUTING] Unknown message type: 0x%02x\n", msg_type);
                 break;
             }
         } else if (ready < 0 && errno != EINTR) {
