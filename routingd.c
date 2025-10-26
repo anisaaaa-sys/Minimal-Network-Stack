@@ -14,8 +14,16 @@
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <socket_to_mip_daemon>\n", argv[0]);
+        fprintf(stderr, "Usage: %s [-d] <socket_to_mip_daemon>\n", argv[0]);
         exit(1);
+    }
+
+    int debug = 0;
+    int arg_idx = 1;
+
+    if (argc > 1 && strcmp(argv[1], "-d") == 0) {
+        debug = 1;
+        arg_idx++;
     }
 
     const char *sock_path = argv[1];
