@@ -1,3 +1,5 @@
+#define _DEFAULT_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,6 +48,8 @@ int main(int argc, char *argv[]){
     }
 
     printf("[CLIENT] Connected to mipd UNIX socket! fd=%d\n", sockfd);
+    
+    usleep(100000);
 
     /* Create PING message */
     uint8_t buffer[MAX_SDU_SIZE];
@@ -57,7 +61,7 @@ int main(int argc, char *argv[]){
     int total_len = ping_len + 2; // +2 for dest_mip byte and ttl bytes
 
     printf("[CLIENT] Sending %d bytes: dest=%d, TTL=%d, msg='%.*s'\n", 
-           total_len, dest_mip, ttl, buffer + 2);
+           total_len, dest_mip, ttl, ping_len, (char*)(buffer + 2));
 
     struct timeval start_time, end_time;
     gettimeofday(&start_time, NULL);
@@ -85,7 +89,7 @@ int main(int argc, char *argv[]){
 
     if (n > 0) {
         uint8_t reply_src = reply[0];
-        uint8_t reply_ttl = reply[1];
+        //uint8_t reply_ttl = reply[1];
         char *reply_msg = (char*)(reply + 2);
         size_t reply_len = n - 2;
 
