@@ -173,7 +173,7 @@ int main(int argc, char *argv[]) {
                 continue;
             }
             
-            if (peek > 0) {
+            if (peek > 1) {
                 // Data waiting = client ping request
                 if (debug) {
                     printf("[MIPD] fd=%d has %zd bytes waiting (client). First bytes: '%.*s'\n",
