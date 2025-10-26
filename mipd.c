@@ -112,6 +112,9 @@ int main(int argc, char *argv[]) {
                 if (fd == local_if.rsock[j]) { is_raw = 1; break; }
             }
             if (is_raw) { idx_raw[n_raw++] = i; continue; }
+
+            if (fd == local_if.routing_daemon_fd) { idx_routing[n_routing++] = i; continue; }
+
             if (fd == local_if.server_fd) { idx_server[n_server++] = i; continue; }
             idx_client[n_client++] = i; // short-lived client
         }

@@ -133,10 +133,7 @@ int main(int argc, char *argv[]) {
 
             switch (msg_type) {
                 case MSG_HELLO:
-                    if (payload_len >= 2) {
-                        uint8_t sender_mip = payload[1];
-                        handle_hello(&state, sender_mip);
-                    }
+                    handle_hello(&state, src_mip);
                     break;
                 
                 case MSG_UPDATE:

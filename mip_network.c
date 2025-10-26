@@ -23,6 +23,62 @@ int send_mip_packet(struct ifs_data *ifs, int if_index,
         ttl = DEFAULT_TTL;
     }
 
+    if (dst_mip == MIP_DEST_ADDR) {
+        printf("[MIPD] Broadcast message detected (dest=255) - sending on all interfaces\n");
+
+        uint8_t bmac[6] = ETH_BROADCAST;
+
+        struct ether_frame frame_hdr;
+        struct mip_header mip_hdr;
+        memset(&frame_hdr, 0, sizeof(frame_hdr));
+        memset(&mip_hdr, 0, sizeof(mip_hdr));
+
+        size_t sdu_len_words = (sdu_len_bytes + 3) / 4;
+        if (sdu_len_words > MIP_SDU_LEN_MASK) sdu_len_words = MIP_SDU_LEN_MASK;
+        size_t padded_len = sdu_len_words * 4;
+
+        uint8_t *padded = NULL;
+        if (padded_len > sdu_len_bytes) {
+            padded = malloc(padded_len);
+            if (!padded) return -1;
+            memcpy(padded, sdu, sdu_len_bytes);
+            memset(padded + sdu_len_bytes, 0, padded_len - sdu_len_bytes);
+        }
+
+        struct iovec msgvec[3];
+        struct msghdr msg = {0};
+        msgvec[0].iov_base = &frame_hdr;
+        msgvec[0].iov_len = sizeof(frame_hdr);
+        msgvec[1].iov_base = &mip_hdr;
+        msgvec[1].iov_len = sizeof(mip_hdr);
+        msgvec[2].iov_base = padded ? padded : (void*)sdu;
+        msgvec[2].iov_len = padded ? padded_len : sdu_len_bytes;
+        msg.msg_iov = msgvec;
+        msg.msg_iovlen = 3;
+
+        for (int i = 0; i < ifs->ifn; i++) {
+            memcpy(frame_hdr.dst_addr, bmac, 6);
+            memcpy(frame_hdr.src_addr, ifs->macs[i], 6);
+            frame_hdr.eth_proto = htons(ETH_P_MIP);
+
+            mip_hdr.dest = MIP_DEST_ADDR;
+            mip_hdr.src = ifs->local_mip_addr;
+            mip_hdr.ttl_sdu = htons(MIP_MAKE_TTL_SDU(ttl, sdu_len_words, sdu_type));
+
+            msg.msg_name = &(ifs->addr[i]);
+            msg.msg_namelen = sizeof(struct sockaddr_ll);
+
+            ssize_t rc = sendmsg(ifs->rsock[i], &msg, 0);
+            if (rc < 0)
+                perror("[send_mip_packet] broadcast sendmsg failed");
+            else
+                printf("[send_mip_packet] Broadcast sent on if=%d (%zd bytes)\n", i, rc);
+        }
+
+        if (padded) free(padded);
+        return 0;
+    }
+
     /* Try to find MAC + if_index from ARP cache */
     uint8_t dst_mac[6];
     int arp_if_index = -1;
@@ -34,7 +90,7 @@ int send_mip_packet(struct ifs_data *ifs, int if_index,
 
     /* If ARP miss, don't send, wait for ARP */
     if (!have_arp) {
-        printf("[send_mip_packet] ARP miss - sending ARP request\n");
+        printf("[MIPD] ARP miss - sending ARP request\n");
         send_arp_request(ifs, if_index, dst_mip);
         return -1;
     }
@@ -55,7 +111,7 @@ int send_mip_packet(struct ifs_data *ifs, int if_index,
     mip_hdr.src = ifs->local_mip_addr;
     size_t sdu_len_words = (sdu_len_bytes + 3) / 4;
     if (sdu_len_words > MIP_SDU_LEN_MASK) sdu_len_words = MIP_SDU_LEN_MASK;
-    mip_hdr.ttl_sdu = htons(MIP_MAKE_TTL_SDU(15, sdu_len_words, sdu_type)); 
+    mip_hdr.ttl_sdu = htons(MIP_MAKE_TTL_SDU(ttl, sdu_len_words, sdu_type)); 
 
     /* Build iovec: frame header, mip header, payload */
     struct iovec msgvec[3];
@@ -92,7 +148,7 @@ int send_mip_packet(struct ifs_data *ifs, int if_index,
         return -1;
     }
 
-    printf("[send_mip_packet] Sending to MIP %u via if=%d, TTL=%u, sdu_type=0x%02x, %zu bytes\n", 
+    printf("[MIPD] Sending to MIP %u via if=%d, TTL=%u, sdu_type=0x%02x, %zu bytes\n", 
             dst_mip, chosen_if, ttl, sdu_type, sdu_len_bytes);
 
     ssize_t rc = sendmsg(ifs->rsock[chosen_if], &msg, 0);
@@ -101,7 +157,7 @@ int send_mip_packet(struct ifs_data *ifs, int if_index,
         if (padded) free(padded);
         return -1;
     }
-    printf("[send_mip_packet] Sent %zd bytes\n", rc);
+    printf("[MIPD] Sent %zd bytes\n", rc);
     if (padded) free(padded);
     return (int)rc;
 }
@@ -129,7 +185,7 @@ int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet,
     uint16_t sdu_len_words = MIP_EXTRACT_SDU_LEN(host_ttl_sdu);
     size_t sdu_len_bytes = (size_t)sdu_len_words * 4;
 
-    printf("[handle_mip_packet] From MIP %u to MIP %u, TTL=%u, type=0x%02x, len=%zu\n",
+    printf("[MIPD] From MIP %u to MIP %u, TTL=%u, type=0x%02x, len=%zu\n",
            mip_hdr->src, mip_hdr->dest, ttl, sdu_type, sdu_len_bytes);
 
     /* Verify we have enough bytes */
@@ -140,20 +196,20 @@ int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet,
 
     /* Handle MIP-ARP packets */
     if (sdu_type == SDU_TYPE_ARP) {
-        printf("[handle_mip_packet] MIP-ARP packet detected\n");
+        printf("[MIPD] MIP-ARP packet detected\n");
         return handle_arp_packet(ifs, sdu, sdu_len_bytes, mip_hdr->src, 
                                  frame_hdr->src_addr, if_index);
     }
 
     /* Check if packet is for us (or broadcast) */
     if (mip_hdr->dest != ifs->local_mip_addr && mip_hdr->dest != 255) {
-        printf("[handle_mip_packet] Packet not for us (dest %u), forwarding...\n", 
+        printf("[MIPD] Packet not for us (dest %u), forwarding...\n", 
                mip_hdr->dest);
         forward_mip_packet(ifs, mip_hdr->dest, mip_hdr->src, ttl, sdu_type, sdu, sdu_len_bytes);
         return 0;
     }
 
-    printf("[handle_mip_packet] Packet is for us\n");
+    printf("[MIPD] Packet is for us\n");
 
     /* Handle ROUTING packets */
     if (sdu_type == SDU_TYPE_ROUTING) {
@@ -171,7 +227,7 @@ int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet,
                 if (sent < 0) {
                     perror("forward to routing daemon");
                 } else {
-                    printf("[handle_mip_packet] Forwarded to routing daemon\n");
+                    printf("[MIPD] Forwarded to routing daemon\n");
                 }
             }
         return 0;
@@ -191,7 +247,7 @@ int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet,
         
         if (is_pong) {
             /* PONG response - find waiting client */
-            printf("[handle_mip_packet] Received PONG from MIP %d\n", mip_hdr->src);
+            printf("[MIPD] Received PONG from MIP %d\n", mip_hdr->src);
 
             printf("[DEBUG PONG] Got PONG from MIP %d. pending_ping_count=%d\n",
                    mip_hdr->src, ifs->pending_ping_count);
@@ -231,13 +287,13 @@ int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet,
                 if (req_len == pong_msg_len && memcmp(req_msg, pong_msg, req_len) == 0) {
                     target_fd = p->client_fd;
                     target_index = i;
-                    printf("[handle_mip_packet] Found waiting client fd=%d (idx=%d)\n", target_fd, i);
+                    printf("[MIPD] Found waiting client fd=%d (idx=%d)\n", target_fd, i);
                     break;
                 }
             }
              
             if (target_fd < 0) {
-                printf("[handle_mip_packet] No client waiting for PONG from MIP %d\n",
+                printf("[MIPD] No client waiting for PONG from MIP %d\n",
                        mip_hdr->src);
                 return 0;
             }
@@ -250,13 +306,13 @@ int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet,
             if (to_copy > sizeof(response) - 2) to_copy = sizeof(response) - 2;
             memcpy(response + 2, sdu, to_copy);
  
-            printf("[handle_mip_packet] Sending PONG to client fd=%d\n", target_fd);
+            printf("[MIPD] Sending PONG to client fd=%d\n", target_fd);
             ssize_t written = write(target_fd, response, to_copy + 2);
             if (written < 0) {
                 perror("write to client");
                 close(target_fd);
             } else {
-                printf("[handle_mip_packet] Delivered PONG to client\n");
+                printf("[MIPD] Delivered PONG to client\n");
             }
              
             /* Close client connection after delivering PONG */
@@ -269,10 +325,10 @@ int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet,
             }
         } else {
             /* PING request - send to server */
-            printf("[handle_mip_packet] Received PING from MIP %d\n", mip_hdr->src);
+            printf("[MIPD] Received PING from MIP %d\n", mip_hdr->src);
             
             if (ifs->server_fd < 0) {
-                printf("[handle_mip_packet] No server connected, dropping PING\n");
+                printf("[MIPD] No server connected, dropping PING\n");
                 return 0;
             }
 
@@ -284,14 +340,14 @@ int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet,
             if (to_copy > sizeof(response) - 2) to_copy = sizeof(response) - 2;
             memcpy(response + 2, sdu, to_copy);
 
-            printf("[handle_mip_packet] Sending PING to server fd=%d\n", ifs->server_fd);
+            printf("[MIPD] Sending PING to server fd=%d\n", ifs->server_fd);
             ssize_t written = write(ifs->server_fd, response, to_copy + 2);
             if (written < 0) {
                 perror("write to server");
                 close(ifs->server_fd);
                 ifs->server_fd = -1;
             } else {
-                printf("[handle_mip_packet] Delivered PING to server\n");
+                printf("[MIPD] Delivered PING to server\n");
             }
         }
     }

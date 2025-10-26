@@ -60,7 +60,7 @@ int handle_unix_connection(struct ifs_data *ifs, int client_fd, int debug) {
             if (debug) perror("handle_unix_connection: read");
         } else {
             // nread == 0: Client closed the socket
-            if (debug) printf("handle_unix_connection: client closed connection (nread == 0). Closing fd %d\n", client_fd);
+            if (debug) printf("[MIPD] Client closed connection (nread == 0). Closing fd %d\n", client_fd);
         }
         close(client_fd);
         return -1;
@@ -125,8 +125,27 @@ int handle_unix_connection(struct ifs_data *ifs, int client_fd, int debug) {
     uint8_t dst_mac[6];
     int send_if = -1;
 
+
+    if (dest_mip == MIP_DEST_ADDR) {
+        printf("[MIPD] Broadcast packet detected (dest=255) - sending on all interfaces\n");
+
+        uint8_t eff_ttl = (ttl == 0) ? DEFAULT_TTL : ttl;
+
+        for (int i = 0; i < ifs->ifn; i++) {
+            int rc = send_mip_packet(ifs, i, MIP_DEST_ADDR, SDU_TYPE_PING,
+                                     padded_sdu, padded_sdu_len, eff_ttl);
+            if (rc < 0) {
+                perror("send_mip_packet: broadcast failed");
+            } else {
+                printf("[MIPD] Broadcast sent on interface %d", i);
+            }
+        }
+        free(padded_sdu);
+        return 1;
+    }
+
     /* ARP cache lookup */
-    printf("[handle_unix_connection] Checking ARP cache (count=%d)\n", ifs->arp.entry_count);
+    printf("[MIPD] Checking ARP cache (count=%d)\n", ifs->arp.entry_count);
     
     int arp_found = arp_cache_lookup(ifs->arp.entries, ifs->arp.entry_count,
                             dest_mip, dst_mac, &send_if);
