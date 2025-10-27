@@ -236,8 +236,13 @@ int main(int argc, char *argv[]) {
                 close(fd);
                 if (local_if.routing_daemon_fd == fd) local_if.routing_daemon_fd = -1;
             } else {
+                printf("[MIPD] Received %zd bytes from routing daemon (fd=%d)\n", m, fd);
+                
                 // Message format: [dest_mip][ttl][payload...]
-                if (m < 3) continue;
+                if (m < 3) {
+                    printf("[MIPD] Message from routing daemon too short (%zd bytes), ignoring\n", m);
+                    continue;
+                }
 
                 uint8_t dest = buffer[0];
                 uint8_t ttl = buffer[1];

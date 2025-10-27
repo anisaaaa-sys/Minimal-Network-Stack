@@ -52,30 +52,38 @@ int main(int argc, char *argv[]) {
     }
 
     // Identify as routing daemon
+    printf("[ROUTING] Sending identification to MIP daemon (SDU_TYPE=0x%02x)\n", 
+           SDU_TYPE_ROUTING);
     uint8_t ident = SDU_TYPE_ROUTING;
     if (send(sockfd, &ident, 1, 0) < 0) {
         perror("send identification");
         close(sockfd);
         exit(1);
     }
+    printf("[ROUTING] Sent identification, waiting for MIP address...\n");
 
     // Read local MIP address from daemon
     uint8_t mip_info[2];
+    printf("[ROUTING] Receiving MIP address from daemon...\n");
     ssize_t n = recv(sockfd, mip_info, 2, 0);
+    printf("[ROUTING] Received %zd bytes from daemon\n", n);
     if (n < 1) {
-        fprintf(stderr, "Failed to receive MIP address\n");
+        fprintf(stderr, "[ROUTING] Failed to receive MIP address (received %zd bytes)\n", n);
         close(sockfd);
         exit(1);
     }
 
     uint8_t local_mip = mip_info[0];
+    printf("[ROUTING] Got MIP address: %d\n", local_mip);
 
+    printf("[ROUTING] Initializing routing state...\n");
     struct routing_state state;
     init_routing_state(&state, local_mip);
     state.mip_sock = sockfd;
 
     printf("[ROUTING] Routing daemon started for MIP %d, socket fd=%d\n", 
            local_mip, sockfd);
+    fflush(stdout);
 
     // Main loop
     time_t last_print = 0;
