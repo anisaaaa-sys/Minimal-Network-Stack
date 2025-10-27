@@ -10,7 +10,7 @@
 
 int send_mip_packet(struct ifs_data *ifs, int if_index,
                 uint8_t dst_mip, uint8_t sdu_type, 
-                const uint8_t *sdu, size_t sdu_len_bytes, uint8_t ttl) {
+                const uint8_t *sdu, size_t sdu_len_bytes, uint8_t ttl, uint8_t src_mip) {
     if (!ifs) return -1;
     if (sdu == NULL && sdu_len_bytes != 0) return -1;
     if (ifs->ifn <= 0) {
@@ -21,6 +21,11 @@ int send_mip_packet(struct ifs_data *ifs, int if_index,
     // Use default TTL if 0
     if (ttl == 0) {
         ttl = DEFAULT_TTL;
+    }
+    
+    // Use local MIP address as source if not specified (src_mip == 0)
+    if (src_mip == 0) {
+        src_mip = ifs->local_mip_addr;
     }
 
     if (dst_mip == MIP_DEST_ADDR) {
@@ -62,7 +67,7 @@ int send_mip_packet(struct ifs_data *ifs, int if_index,
             frame_hdr.eth_proto = htons(ETH_P_MIP);
 
             mip_hdr.dest = MIP_DEST_ADDR;
-            mip_hdr.src = ifs->local_mip_addr;
+            mip_hdr.src = src_mip;
             mip_hdr.ttl_sdu = htons(MIP_MAKE_TTL_SDU(ttl, sdu_len_words, sdu_type));
 
             msg.msg_name = &(ifs->addr[i]);
@@ -108,7 +113,7 @@ int send_mip_packet(struct ifs_data *ifs, int if_index,
 
     /* Fill in MIP header */
     mip_hdr.dest = dst_mip;
-    mip_hdr.src = ifs->local_mip_addr;
+    mip_hdr.src = src_mip;
     size_t sdu_len_words = (sdu_len_bytes + 3) / 4;
     if (sdu_len_words > MIP_SDU_LEN_MASK) sdu_len_words = MIP_SDU_LEN_MASK;
     mip_hdr.ttl_sdu = htons(MIP_MAKE_TTL_SDU(ttl, sdu_len_words, sdu_type)); 

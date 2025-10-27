@@ -85,6 +85,12 @@ int main(int argc, char *argv[]) {
            local_mip, sockfd);
     fflush(stdout);
 
+    // Send initial HELLO and UPDATE immediately to speed up convergence
+    printf("[ROUTING] Sending initial HELLO and UPDATE...\n");
+    send_hello(&state);
+    send_update(&state);
+    fflush(stdout);
+
     // Main loop
     time_t last_print = 0;
     while (1) {

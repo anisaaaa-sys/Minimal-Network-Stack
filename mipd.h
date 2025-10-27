@@ -179,8 +179,8 @@ int handle_arp_packet(struct ifs_data *ifs, const uint8_t *sdu,
                       size_t sdu_len, uint8_t src_mip, 
                       const uint8_t *src_mac, int if_index);
 int send_mip_packet(struct ifs_data *ifs, int if_index,
-					uint8_t dst_mip, uint8_t sdu_type, 
-					const uint8_t *sdu, size_t sdu_len_bytes, uint8_t ttl);
+				uint8_t dst_mip, uint8_t sdu_type, 
+				const uint8_t *sdu, size_t sdu_len_bytes, uint8_t ttl, uint8_t src_mip);
 int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet, size_t len, int if_index);
 int init_unix_socket(const char *path);
 int handle_unix_connection(struct ifs_data *ifs, int client_fd, 

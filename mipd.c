@@ -281,15 +281,25 @@ int main(int argc, char *argv[]) {
             int fd = events[i].data.fd;
             if (debug) printf("[MIPD] Routing daemon event on fd=%d\n", fd);
 
-            uint8_t buffer[MAX_SDU_SIZE];
-            ssize_t m = recv(fd, buffer, sizeof(buffer), 0);
-            if (m <= 0) {
-                if (m == 0) printf("[MIPD] Routing dameon disconnected\n");
-                else perror("recv from routing daemon");
-                epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, NULL);
-                close(fd);
-                if (local_if.routing_daemon_fd == fd) local_if.routing_daemon_fd = -1;
-            } else {
+            // Read ALL available messages from routing daemon (may be multiple)
+            while (1) {
+                uint8_t buffer[MAX_SDU_SIZE];
+                ssize_t m = recv(fd, buffer, sizeof(buffer), MSG_DONTWAIT);
+                if (m <= 0) {
+                    if (m == 0) {
+                        printf("[MIPD] Routing dameon disconnected\n");
+                        epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, NULL);
+                        close(fd);
+                        if (local_if.routing_daemon_fd == fd) local_if.routing_daemon_fd = -1;
+                    } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                        perror("recv from routing daemon");
+                        epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, NULL);
+                        close(fd);
+                        if (local_if.routing_daemon_fd == fd) local_if.routing_daemon_fd = -1;
+                    }
+                    // EAGAIN/EWOULDBLOCK = no more messages, break out of while loop
+                    break;
+                }
                 printf("[MIPD] Received %zd bytes from routing daemon (fd=%d): ", m, fd);
                 for (ssize_t j = 0; j < m && j < 10; j++) {
                     printf("0x%02x ", buffer[j]);
@@ -307,7 +317,23 @@ int main(int argc, char *argv[]) {
                 uint8_t *payload = buffer + 2;
                 size_t payload_len = m - 2;
 
+                printf("[MIPD] Parsing routing daemon message: dest=%d, ttl=%d, payload_len=%zu\n",
+                       dest, ttl, payload_len);
+                if (payload_len >= 1) {
+                    printf("[MIPD] Payload[0]=0x%02x", payload[0]);
+                    if (payload_len >= 2) printf(" Payload[1]=0x%02x", payload[1]);
+                    if (payload_len >= 3) printf(" Payload[2]=0x%02x", payload[2]);
+                    if (payload_len >= 4) printf(" Payload[3]=0x%02x", payload[3]);
+                    printf("\n");
+                }
+
                 // Check if it is a route response
+                printf("[MIPD] Checking if route response: payload_len=%zu (need >=4), ", payload_len);
+                printf("payload[0]=0x%02x (need 0x52), payload[1]=0x%02x (need 0x53), payload[2]=0x%02x (need 0x50)\n",
+                       payload_len >= 1 ? payload[0] : 0,
+                       payload_len >= 2 ? payload[1] : 0,
+                       payload_len >= 3 ? payload[2] : 0);
+                
                 if (payload_len >= 4 && payload[0] == 0x52 &&
                     payload[1] == 0x53 && payload[2] == 0x50) {
                         // Route response - handle it
@@ -319,10 +345,10 @@ int main(int argc, char *argv[]) {
                     // Regular routing protocol message - send it
                     if (debug) printf("[MPID] Routing daemon sending to MIP %d\n", dest);
                     send_mip_packet(&local_if, 0, dest, SDU_TYPE_ROUTING, 
-                                    payload, payload_len, ttl);
+                                    payload, payload_len, ttl, 0);
                 }
-            }
-        }
+            } // end while (reading all messages from routing daemon)
+        } // end for (routing daemon events)
 
         /* Handle client messages */
         for (int k = 0; k < n_client; k++) {
@@ -369,7 +395,7 @@ int main(int argc, char *argv[]) {
                 }
 
                 int rc = send_mip_packet(&local_if, 0, dest, SDU_TYPE_PING, 
-                                         sdu, sdu_len, ttl);
+                                         sdu, sdu_len, ttl, 0);
                 if (rc < 0) {
                     fprintf(stderr, "[MIPD] Failed to forward server message to MIP %u\n", dest);
                     int exists = 0;

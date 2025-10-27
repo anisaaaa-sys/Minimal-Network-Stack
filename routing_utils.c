@@ -185,7 +185,9 @@ void handle_update(struct routing_state *state, uint8_t from_mip,
 }
 
 void handle_route_request(struct routing_state *state, uint8_t dest_mip) {
+    printf("[ROUTING] ========== HANDLE_ROUTE_REQUEST START ==========\n");
     printf("[ROUTING] Route lookup request for MIP %d\n", dest_mip);
+    printf("[ROUTING] mip_sock fd=%d\n", state->mip_sock);
 
     struct route_entry *route = lookup_route(state, dest_mip);
 
@@ -207,12 +209,20 @@ void handle_route_request(struct routing_state *state, uint8_t dest_mip) {
     }
 
     printf("[ROUTING] Sending RESPONSE: ['R']['S']['P'][next_hop=%d]\n", buffer[5]);
+    printf("[ROUTING] Response buffer: 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x\n",
+           buffer[0], buffer[1], buffer[2], buffer[3], buffer[4], buffer[5]);
+    
     ssize_t sent = send(state->mip_sock, buffer, 6, 0);
     if (sent < 0) {
         perror("handle_route_request: send");
+        printf("[ROUTING] ERROR: send failed with errno=%d\n", errno);
+    } else if (sent != 6) {
+        printf("[ROUTING] WARNING: Only sent %zd bytes (expected 6)!\n", sent);
     } else {
-        printf("[ROUTING] Route response sent (%zd bytes)\n", sent);
+        printf("[ROUTING] Route response sent successfully (%zd bytes)\n", sent);
     }
+    printf("[ROUTING] ========== HANDLE_ROUTE_REQUEST END ==========\n");
+    fflush(stdout);
 }
 
 void update_neighbors(struct routing_state *state) {

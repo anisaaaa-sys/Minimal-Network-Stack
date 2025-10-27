@@ -261,7 +261,7 @@ int handle_arp_packet(struct ifs_data *ifs, const uint8_t *sdu,
                     /* No manual padding here. Let send_mip_packet() do padding.
                        This avoids double-padding and keeps wire-format single-sourced. */
                     int rc = send_mip_packet(ifs, if_index, mip_addr, 
-                                             SDU_TYPE_PING, pending->sdu, pending->sdu_len, pending->ttl);
+                                             SDU_TYPE_PING, pending->sdu, pending->sdu_len, pending->ttl, 0);
                     printf("[ARP] send_mip_packet (flush pending) rc=%d\n", rc);
                     
                     if (rc >= 0) {

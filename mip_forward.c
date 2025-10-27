@@ -86,9 +86,65 @@ void handle_route_response(struct ifs_data *ifs, const uint8_t *payload, size_t 
             continue;
         }
 
-        // Send the packet
+        printf("[FORWARD] Next hop MIP %d found in ARP cache: MAC %02x:%02x:%02x:%02x:%02x:%02x on if %d\n",
+               next_hop, next_hop_mac[0], next_hop_mac[1], next_hop_mac[2],
+               next_hop_mac[3], next_hop_mac[4], next_hop_mac[5], send_if);
+
+        // CRITICAL: When forwarding, we need to send to the NEXT HOP's MAC address,
+        // not the final destination. So we call send_mip_packet with next_hop as dst_mip
+        // to ensure it uses the next hop's MAC. But we need to fix the MIP header afterward.
+        // Actually, a better approach: temporarily add the dest_mip with next_hop's MAC to ARP cache
+        
+        // Save any existing ARP entry for dest_mip
+        uint8_t old_mac[6];
+        int old_if = -1;
+        int had_dest_arp = (arp_cache_lookup(ifs->arp.entries, ifs->arp.entry_count,
+                                             pf->dest_mip, old_mac, &old_if) == 0);
+        
+        // Temporarily set dest_mip to use next_hop's MAC
+        // Find or create ARP entry for dest_mip
+        int dest_entry_idx = -1;
+        for (int j = 0; j < ifs->arp.entry_count; j++) {
+            if (ifs->arp.entries[j].mip_addr == pf->dest_mip) {
+                dest_entry_idx = j;
+                break;
+            }
+        }
+        if (dest_entry_idx < 0 && ifs->arp.entry_count < ARP_CACHE_SIZE) {
+            dest_entry_idx = ifs->arp.entry_count++;
+        }
+        
+        if (dest_entry_idx >= 0) {
+            // Temporarily override: make dest_mip point to next_hop's MAC
+            ifs->arp.entries[dest_entry_idx].mip_addr = pf->dest_mip;
+            memcpy(ifs->arp.entries[dest_entry_idx].mac_addr, next_hop_mac, 6);
+            ifs->arp.entries[dest_entry_idx].if_index = send_if;
+            
+            printf("[FORWARD] Temporarily set ARP[%d]: MIP %d -> next_hop MAC\n",
+                   dest_entry_idx, pf->dest_mip);
+        }
+
+        // Send the packet - now send_mip_packet will find dest_mip with next_hop's MAC
+        // IMPORTANT: Pass pf->src_mip to preserve the original source address when forwarding
         int rc = send_mip_packet(ifs, send_if, pf->dest_mip, pf->sdu_type,
-                                 pf->sdu, pf->sdu_len, pf->ttl);
+                                 pf->sdu, pf->sdu_len, pf->ttl, pf->src_mip);
+        
+        // Restore original ARP entry if it existed
+        if (dest_entry_idx >= 0) {
+            if (had_dest_arp) {
+                ifs->arp.entries[dest_entry_idx].mip_addr = pf->dest_mip;
+                memcpy(ifs->arp.entries[dest_entry_idx].mac_addr, old_mac, 6);
+                ifs->arp.entries[dest_entry_idx].if_index = old_if;
+                printf("[FORWARD] Restored original ARP entry for MIP %d\n", pf->dest_mip);
+            } else {
+                // Remove the temporary entry
+                for (int j = dest_entry_idx; j < ifs->arp.entry_count - 1; j++) {
+                    ifs->arp.entries[j] = ifs->arp.entries[j + 1];
+                }
+                ifs->arp.entry_count--;
+                printf("[FORWARD] Removed temporary ARP entry for MIP %d\n", pf->dest_mip);
+            }
+        }
         
         if (rc < 0) {
             fprintf(stderr, "[FORWARD] Failed to forward packet to MIP %d\n", pf->dest_mip);

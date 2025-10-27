@@ -140,7 +140,7 @@ int handle_unix_connection(struct ifs_data *ifs, int client_fd, int debug) {
 
         for (int i = 0; i < ifs->ifn; i++) {
             int rc = send_mip_packet(ifs, i, MIP_DEST_ADDR, SDU_TYPE_PING,
-                                     padded_sdu, padded_sdu_len, eff_ttl);
+                                     padded_sdu, padded_sdu_len, eff_ttl, 0);
             if (rc < 0) {
                 perror("send_mip_packet: broadcast failed");
             } else {
@@ -180,7 +180,7 @@ int handle_unix_connection(struct ifs_data *ifs, int client_fd, int debug) {
         printf("[MIPD] Sending MIP packet to MIP %d via interface %d (TTL=%d)\n", 
                dest_mip, send_if, pending->ttl);
         int rc = send_mip_packet(ifs, send_if, dest_mip, SDU_TYPE_PING, 
-                                 padded_sdu, padded_sdu_len, pending->ttl);
+                                 padded_sdu, padded_sdu_len, pending->ttl, 0);
     
         free(padded_sdu);
 
