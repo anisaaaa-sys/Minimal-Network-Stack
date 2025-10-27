@@ -143,57 +143,77 @@ int main(int argc, char *argv[]) {
             if (peek < 0) {
                 printf("[MIPD] Peek error: %s\n", strerror(errno));
             } else if (peek > 0) {
-                printf("[MIPD] First byte: 0x%02x\n", (unsigned char)peekbuf[0]);
+                printf("[MIPD] First byte: 0x%02x (%d decimal)\n", 
+                       (unsigned char)peekbuf[0], (unsigned char)peekbuf[0]);
+                if (peek >= 2) {
+                    printf("[MIPD] First 2 bytes: 0x%02x 0x%02x\n", 
+                           (unsigned char)peekbuf[0], (unsigned char)peekbuf[1]);
+                }
             }
             
             if (peek == 1) {
-                // Single byte = SDU type identification
-                uint8_t sdu_type;
-                recv(client_fd, &sdu_type, 1, 0);
+                // Single byte = SDU type identification (but only if it's a valid SDU type)
+                uint8_t first_byte = (uint8_t)peekbuf[0];
+                
+                // SDU types are in range [0, 7], so check if this is a valid identification
+                if (first_byte <= 7) {
+                    // This is an identification byte
+                    uint8_t sdu_type;
+                    recv(client_fd, &sdu_type, 1, 0);
 
-                printf("[MIPD] Upper layer identified: SDU type 0x%02x\n", sdu_type);
+                    printf("[MIPD] Upper layer identified: SDU type 0x%02x\n", sdu_type);
 
-                if (sdu_type == SDU_TYPE_ROUTING) {
-                    // This is the routing daemon
-                    printf("[MIPD] Routing daemon attempting to connect, old fd=%d, new fd=%d\n", 
-                           local_if.routing_daemon_fd, client_fd);
-                    local_if.routing_daemon_fd = client_fd;
-                    printf("[MIPD] Routing daemon connected (fd=%d) for MIP %d\n", 
-                           client_fd, local_if.local_mip_addr);
+                    if (sdu_type == SDU_TYPE_ROUTING) {
+                        // This is the routing daemon
+                        printf("[MIPD] ***** ROUTING DAEMON IDENTIFICATION *****\n");
+                        printf("[MIPD] SDU type 0x%02x == SDU_TYPE_ROUTING (0x%02x)\n", 
+                               sdu_type, SDU_TYPE_ROUTING);
+                        printf("[MIPD] Routing daemon attempting to connect, old fd=%d, new fd=%d\n", 
+                               local_if.routing_daemon_fd, client_fd);
+                        local_if.routing_daemon_fd = client_fd;
+                        printf("[MIPD] Routing daemon connected (fd=%d) for MIP %d\n", 
+                               client_fd, local_if.local_mip_addr);
+                        printf("[MIPD] ***** END ROUTING DAEMON SETUP *****\n");
 
-                    // Send local MIP address to routing daemon
-                    uint8_t mip_info[2];
-                    mip_info[0] = local_if.local_mip_addr;
-                    mip_info[1] = 0;
-                    ssize_t sent = send(client_fd, mip_info, 2, 0);
-                    printf("[MIPD] Sent MIP info to routing daemon: mip=%d (sent=%zd bytes)\n", 
-                           local_if.local_mip_addr, sent);
+                        // Send local MIP address to routing daemon
+                        uint8_t mip_info[2];
+                        mip_info[0] = local_if.local_mip_addr;
+                        mip_info[1] = 0;
+                        ssize_t sent = send(client_fd, mip_info, 2, 0);
+                        printf("[MIPD] Sent MIP info to routing daemon: mip=%d (sent=%zd bytes)\n", 
+                               local_if.local_mip_addr, sent);
 
-                    // Add to epoll
-                    struct epoll_event rev = { .events = EPOLLIN, .data.fd = client_fd };
-                    if (epoll_ctl(epollfd, EPOLL_CTL_ADD, client_fd, &rev) < 0) {
-                        perror("epoll_ctl add routing_fd");
-                        close(client_fd);
-                        if (local_if.routing_daemon_fd == client_fd) local_if.routing_daemon_fd = -1;
-                    } else if (debug) {
-                        printf("[MIPD] Added routing daemon fd %d to epoll\n", client_fd);
+                        // Add to epoll
+                        struct epoll_event rev = { .events = EPOLLIN, .data.fd = client_fd };
+                        if (epoll_ctl(epollfd, EPOLL_CTL_ADD, client_fd, &rev) < 0) {
+                            perror("epoll_ctl add routing_fd");
+                            close(client_fd);
+                            if (local_if.routing_daemon_fd == client_fd) local_if.routing_daemon_fd = -1;
+                        } else if (debug) {
+                            printf("[MIPD] Added routing daemon fd %d to epoll\n", client_fd);
+                        }
+                    } else {
+                        // Other upper layer (store for later)
+                        if (local_if.upper_layer_count < MAX_UPPER_LAYERS) {
+                            local_if.upper_layers[local_if.upper_layer_count].fd = client_fd;
+                            local_if.upper_layers[local_if.upper_layer_count].sdu_type = sdu_type;
+                            local_if.upper_layers[local_if.upper_layer_count].active = 1;
+
+                            struct epoll_event uev = { .events = EPOLLIN, .data.fd = client_fd};
+                            epoll_ctl(epollfd, EPOLL_CTL_ADD, client_fd, &uev);
+                        }
                     }
+                    continue;
                 } else {
-                    // Other upper layer (store for later)
-                    if (local_if.upper_layer_count < MAX_UPPER_LAYERS) {
-                        local_if.upper_layers[local_if.upper_layer_count].fd = client_fd;
-                        local_if.upper_layers[local_if.upper_layer_count].sdu_type = sdu_type;
-                        local_if.upper_layers[local_if.upper_layer_count].active = 1;
-
-                        struct epoll_event uev = { .events = EPOLLIN, .data.fd = client_fd};
-                        epoll_ctl(epollfd, EPOLL_CTL_ADD, client_fd, &uev);
-                    }
-                } 
-                continue;
+                    // peek == 1 but first_byte > 7, so it's not an identification
+                    // Treat it as a client connection with data waiting
+                    printf("[MIPD] Single byte (0x%02x) but not valid SDU type, treating as client\n", first_byte);
+                    // Fall through to handle as client connection
+                }
             }
             
-            if (peek > 1) {
-                // Data waiting = client ping request
+            if (peek >= 1) {
+                // Data waiting = client ping request (or peek==1 with invalid SDU type)
                 if (debug) {
                     printf("[MIPD] fd=%d has %zd bytes waiting (client). First bytes: '%.*s'\n",
                            client_fd, peek, (int)(peek > 40 ? 40 : peek), peekbuf);
