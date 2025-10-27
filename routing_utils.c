@@ -199,15 +199,19 @@ void handle_route_request(struct routing_state *state, uint8_t dest_mip) {
 
     if (route && route->valid) {
         buffer[5] = route->next_hop;
-        printf("[ROUTING] Found route to MIP %d via %d\n", dest_mip, route->next_hop);
+        printf("[ROUTING] ***** FOUND ROUTE: MIP %d -> next_hop %d (metric %d) *****\n", 
+               dest_mip, route->next_hop, route->metric);
     } else {
         buffer[5] = 255;    // No route found
-        printf("[ROUTING] No route to MIP %d\n", dest_mip);
+        printf("[ROUTING] ***** NO ROUTE to MIP %d *****\n", dest_mip);
     }
 
+    printf("[ROUTING] Sending RESPONSE: ['R']['S']['P'][next_hop=%d]\n", buffer[5]);
     ssize_t sent = send(state->mip_sock, buffer, 6, 0);
     if (sent < 0) {
         perror("handle_route_request: send");
+    } else {
+        printf("[ROUTING] Route response sent (%zd bytes)\n", sent);
     }
 }
 

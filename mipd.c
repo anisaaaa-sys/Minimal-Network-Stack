@@ -130,16 +130,26 @@ int main(int argc, char *argv[]) {
                 perror("accept");
                 continue;
             }
+            printf("\n========== NEW CONNECTION fd=%d ==========\n", client_fd);
+            fflush(stdout);
             if (debug) printf("[MIPD] New upper-layer connection: fd=%d\n", client_fd);
 
             // Check if this is an upper layer identification
-            // Wait a bit for data to arrive
-            usleep(50000); // 50ms
+            // Use select to wait for data with timeout
+            fd_set readfds;
+            FD_ZERO(&readfds);
+            FD_SET(client_fd, &readfds);
+            struct timeval tv = {0, 200000}; // 200ms timeout
+            
+            int sel = select(client_fd + 1, &readfds, NULL, NULL, &tv);
             
             char peekbuf[64];
-            ssize_t peek = recv(client_fd, peekbuf, sizeof(peekbuf), MSG_PEEK);
+            ssize_t peek = 0;
+            if (sel > 0) {
+                peek = recv(client_fd, peekbuf, sizeof(peekbuf), MSG_PEEK);
+            }
             
-            printf("[MIPD] Peeked %zd bytes from fd=%d\n", peek, client_fd);
+            printf("[MIPD] Peeked %zd bytes from fd=%d (select returned %d)\n", peek, client_fd, sel);
             if (peek < 0) {
                 printf("[MIPD] Peek error: %s\n", strerror(errno));
             } else if (peek > 0) {
@@ -149,7 +159,10 @@ int main(int argc, char *argv[]) {
                     printf("[MIPD] First 2 bytes: 0x%02x 0x%02x\n", 
                            (unsigned char)peekbuf[0], (unsigned char)peekbuf[1]);
                 }
+            } else {
+                printf("[MIPD] No data peeked (select=%d, peek=%zd)\n", sel, peek);
             }
+            fflush(stdout);
             
             if (peek == 1) {
                 // Single byte = SDU type identification (but only if it's a valid SDU type)
@@ -165,15 +178,25 @@ int main(int argc, char *argv[]) {
 
                     if (sdu_type == SDU_TYPE_ROUTING) {
                         // This is the routing daemon
+                        printf("\n");
+                        printf("=====================================================\n");
                         printf("[MIPD] ***** ROUTING DAEMON IDENTIFICATION *****\n");
                         printf("[MIPD] SDU type 0x%02x == SDU_TYPE_ROUTING (0x%02x)\n", 
                                sdu_type, SDU_TYPE_ROUTING);
-                        printf("[MIPD] Routing daemon attempting to connect, old fd=%d, new fd=%d\n", 
-                               local_if.routing_daemon_fd, client_fd);
+                        printf("[MIPD] OLD routing_daemon_fd = %d\n", local_if.routing_daemon_fd);
+                        printf("[MIPD] NEW routing_daemon_fd = %d (client_fd)\n", client_fd);
+                        
+                        if (local_if.routing_daemon_fd >= 0 && local_if.routing_daemon_fd != client_fd) {
+                            printf("[MIPD] WARNING: Overwriting existing routing daemon fd=%d with fd=%d!\n",
+                                   local_if.routing_daemon_fd, client_fd);
+                        }
+                        
                         local_if.routing_daemon_fd = client_fd;
                         printf("[MIPD] Routing daemon connected (fd=%d) for MIP %d\n", 
                                client_fd, local_if.local_mip_addr);
                         printf("[MIPD] ***** END ROUTING DAEMON SETUP *****\n");
+                        printf("=====================================================\n");
+                        printf("\n");
 
                         // Send local MIP address to routing daemon
                         uint8_t mip_info[2];
@@ -284,11 +307,14 @@ int main(int argc, char *argv[]) {
                 uint8_t *payload = buffer + 2;
                 size_t payload_len = m - 2;
 
-                // Check if it is a route request
+                // Check if it is a route response
                 if (payload_len >= 4 && payload[0] == 0x52 &&
                     payload[1] == 0x53 && payload[2] == 0x50) {
                         // Route response - handle it
+                        printf("[MIPD] *** RECEIVED ROUTE RESPONSE FROM ROUTING DAEMON ***\n");
+                        printf("[MIPD] Calling handle_route_response with payload_len=%zu\n", payload_len);
                         handle_route_response(&local_if, payload, payload_len);
+                        printf("[MIPD] *** ROUTE RESPONSE HANDLED ***\n");
                 } else {
                     // Regular routing protocol message - send it
                     if (debug) printf("[MPID] Routing daemon sending to MIP %d\n", dest);

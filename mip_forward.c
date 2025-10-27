@@ -33,11 +33,17 @@ void send_route_request(struct ifs_data *ifs, uint8_t dest_mip) {
 
 /* Handle route response from routing daemon */
 void handle_route_response(struct ifs_data *ifs, const uint8_t *payload, size_t len) {
+    printf("[FORWARD] ============ HANDLE ROUTE RESPONSE ============\n");
+    printf("[FORWARD] Payload length: %zu\n", len);
+    
     // RESPONSE format: ['R']['S']['P'][next_hop_mip]
     if (len < 4) {
-        fprintf(stderr, "[FORWARD] Route response too short\n");
+        fprintf(stderr, "[FORWARD] Route response too short (%zu bytes)\n", len);
         return;
     }
+
+    printf("[FORWARD] Payload bytes: 0x%02x 0x%02x 0x%02x 0x%02x\n",
+           payload[0], payload[1], payload[2], payload[3]);
 
     if (payload[0] != 0x52 || payload[1] != 0x53 || payload[2] != 0x50) {
         fprintf(stderr, "[FORWARD] Invalid route response format\n");
@@ -46,7 +52,8 @@ void handle_route_response(struct ifs_data *ifs, const uint8_t *payload, size_t 
 
     uint8_t next_hop = payload[3];
 
-    printf("[FORWARD] Received route response: next_hop=%d\n", next_hop);
+    printf("[FORWARD] *** RECEIVED ROUTE RESPONSE: next_hop=%d ***\n", next_hop);
+    printf("[FORWARD] Pending forwards count: %d\n", ifs->pending_forward_count);
 
     // Process all pending forwards
     for (int i = 0; i < ifs->pending_forward_count; i++) {

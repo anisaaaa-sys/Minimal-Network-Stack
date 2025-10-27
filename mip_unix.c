@@ -93,6 +93,13 @@ int handle_unix_connection(struct ifs_data *ifs, int client_fd, int debug) {
 
     printf("[MIPD RECV CLIENT] nread = %ld, dest=%d, ttl=%d\n", nread, dest_mip, ttl);
 
+    // Check if destination is local
+    if (dest_mip == ifs->local_mip_addr) {
+        printf("[MIPD] Destination is local (loopback), not implemented\n");
+        close(client_fd);
+        return -1;
+    }
+
     // PAD SDU to 32-bit boundary
     size_t padded_sdu_len = ((sdu_len_bytes + 3) / 4) * 4; // Round up to multiple of 4
     uint8_t *padded_sdu = malloc(padded_sdu_len);
@@ -145,31 +152,27 @@ int handle_unix_connection(struct ifs_data *ifs, int client_fd, int debug) {
     }
 
     /* ARP cache lookup */
-    printf("[MIPD] Checking ARP cache (count=%d)\n", ifs->arp.entry_count);
+    printf("[MIPD] ********** CHECKING ARP CACHE FOR MIP %d **********\n", dest_mip);
+    printf("[MIPD] ARP cache count=%d\n", ifs->arp.entry_count);
     
     int arp_found = arp_cache_lookup(ifs->arp.entries, ifs->arp.entry_count,
                             dest_mip, dst_mac, &send_if);
 
+    printf("[MIPD] ARP lookup result: arp_found=%d\n", arp_found);
+    
     if (arp_found != 0) {
-        // Not in cache: send ARP request(s) on all interfaces and wait
-        pending->waiting_for_arp = 1;
-        if (debug) printf("MIP %d not in ARP cache, sending ARP requests\n", dest_mip);
-        for (int i = 0; i < ifs->ifn; i++) {
-            printf("Sending ARP request on interface %d for MIP %d\n", i, dest_mip);
-            send_arp_request(ifs, i, dest_mip);
-        }
-
-        if (sdu_len_bytes > MAX_SDU_SIZE)
-            sdu_len_bytes = MAX_SDU_SIZE;
-        memcpy(pending->sdu, sdu, sdu_len_bytes);
-        pending->sdu_len = sdu_len_bytes;
-
-        printf("[ARP MISS] Queued pending PING for MIP %d (fd=%d, total pending=%d)\n",
-               dest_mip, client_fd, ifs->pending_ping_count);
-
+        // Not in cache: use forwarding engine for multi-hop routing
+        printf("[MIPD] ********** ARP MISS - USING FORWARDING ENGINE **********\n");
+        printf("[MIPD] Calling forward_mip_packet(dest=%d, src=%d, ttl=%d)\n",
+               dest_mip, ifs->local_mip_addr, (ttl == 0) ? DEFAULT_TTL : ttl);
+        
+        uint8_t eff_ttl = (ttl == 0) ? DEFAULT_TTL : ttl;
+        forward_mip_packet(ifs, dest_mip, ifs->local_mip_addr, eff_ttl, 
+                          SDU_TYPE_PING, sdu, sdu_len_bytes);
         
         free(padded_sdu);
-        return 0; 
+        // Keep client connection open for PONG
+        return 1; 
     } else {
         printf("[MIPD] ARP CACHE HIT for MIP %d - using cached MAC\n", dest_mip);
 
