@@ -389,38 +389,38 @@ int main(int argc, char *argv[]) {
                 uint8_t *sdu = buffer + 2;
                 size_t sdu_len = (size_t)m - 2;
 
-                if (debug) {
-                    printf("[MIPD] Server (fd=%d) sent %zd bytes to MIP %u, TTL %u\n",
-                           fd, m, dest, ttl);
+                printf("[MIPD] Server (fd=%d) sending PONG: %zd bytes to MIP %u, TTL %u\n",
+                       fd, m, dest, ttl);
+                printf("[MIPD] PONG payload: '%.*s'\n", (int)sdu_len, sdu);
+
+                // Check if destination is local
+                if (dest == local_if.local_mip_addr) {
+                    fprintf(stderr, "[MIPD] Server trying to send to local address - ignoring\n");
+                    continue;
                 }
 
-                int rc = send_mip_packet(&local_if, 0, dest, SDU_TYPE_PING, 
-                                         sdu, sdu_len, ttl, 0);
-                if (rc < 0) {
-                    fprintf(stderr, "[MIPD] Failed to forward server message to MIP %u\n", dest);
-                    int exists = 0;
-                    for (int k = 0; k < local_if.pending_ping_count; k++) {
-                        if (local_if.pending_pings[k].dest_mip == dest) {
-                            exists = -1;
-                            break;
-                        }
-                    }
+                // Check if destination is a direct neighbor (in ARP cache)
+                uint8_t dst_mac[6];
+                int send_if = -1;
+                int have_arp = (arp_cache_lookup(local_if.arp.entries, local_if.arp.entry_count,
+                                                 dest, dst_mac, &send_if) == 0);
 
-                    if (!exists) {
-                        if (local_if.pending_ping_count < MAX_PENDING_CLIENTS) {
-                            struct pending_ping *p = &local_if.pending_pings[local_if.pending_ping_count++];
-                            p->client_fd = -1;
-                            p->dest_mip  = dest;
-                            size_t cap = (sdu_len > MAX_SDU_SIZE) ? MAX_SDU_SIZE : sdu_len;
-                            memcpy(p->sdu, sdu, cap);
-                            p->sdu_len = cap;
-                            p->waiting_for_arp = 1;
-                        } else {
-                            fprintf(stderr, "[MIPD] Pending queue full; dropping server message\n");
-                        }
+                if (have_arp) {
+                    // Direct neighbor - send directly
+                    printf("[MIPD] PONG destination MIP %u is direct neighbor, sending directly\n", dest);
+                    int rc = send_mip_packet(&local_if, send_if, dest, SDU_TYPE_PING, 
+                                             sdu, sdu_len, ttl, 0);
+                    if (rc < 0) {
+                        fprintf(stderr, "[MIPD] Failed to send PONG to MIP %u\n", dest);
+                    } else {
+                        printf("[MIPD] PONG sent directly to MIP %u\n", dest);
                     }
-                } else if (debug) {
-                    printf("[MIPD] Forwarded server message to MIP %u (rc=%d)\n", dest, rc);
+                } else {
+                    // Not a direct neighbor - use forwarding engine
+                    printf("[MIPD] PONG destination MIP %u is NOT direct neighbor, using forwarding engine\n", dest);
+                    uint8_t eff_ttl = (ttl == 0) ? DEFAULT_TTL : ttl;
+                    forward_mip_packet(&local_if, dest, local_if.local_mip_addr, eff_ttl,
+                                      SDU_TYPE_PING, sdu, sdu_len);
                 }
             }
         }
