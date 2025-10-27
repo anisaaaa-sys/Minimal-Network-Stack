@@ -1,3 +1,4 @@
+#define _DEFAULT_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -132,8 +133,18 @@ int main(int argc, char *argv[]) {
             if (debug) printf("[MIPD] New upper-layer connection: fd=%d\n", client_fd);
 
             // Check if this is an upper layer identification
+            // Wait a bit for data to arrive
+            usleep(50000); // 50ms
+            
             char peekbuf[64];
-            ssize_t peek = recv(client_fd, peekbuf, sizeof(peekbuf), MSG_PEEK | MSG_DONTWAIT);
+            ssize_t peek = recv(client_fd, peekbuf, sizeof(peekbuf), MSG_PEEK);
+            
+            printf("[MIPD] Peeked %zd bytes from fd=%d\n", peek, client_fd);
+            if (peek < 0) {
+                printf("[MIPD] Peek error: %s\n", strerror(errno));
+            } else if (peek > 0) {
+                printf("[MIPD] First byte: 0x%02x\n", (unsigned char)peekbuf[0]);
+            }
             
             if (peek == 1) {
                 // Single byte = SDU type identification
@@ -236,7 +247,11 @@ int main(int argc, char *argv[]) {
                 close(fd);
                 if (local_if.routing_daemon_fd == fd) local_if.routing_daemon_fd = -1;
             } else {
-                printf("[MIPD] Received %zd bytes from routing daemon (fd=%d)\n", m, fd);
+                printf("[MIPD] Received %zd bytes from routing daemon (fd=%d): ", m, fd);
+                for (ssize_t j = 0; j < m && j < 10; j++) {
+                    printf("0x%02x ", buffer[j]);
+                }
+                printf("\n");
                 
                 // Message format: [dest_mip][ttl][payload...]
                 if (m < 3) {
