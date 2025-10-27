@@ -38,11 +38,11 @@ class HE1Topo(Topo):
         E = self.addHost('E')
 
         # Add links. Note the packet loss of 1% (~1 out of 10 packets is discarded)
-        self.addLink(A, B, bw=10, delay='10ms', loss=1.0, use_tbf=False)
-        self.addLink(B, C, bw=10, delay='10ms', loss=1.0, use_tbf=False)
-        self.addLink(B, D, bw=10, delay='10ms', loss=1.0, use_tbf=False)
-        self.addLink(C, D, bw=10, delay='10ms', loss=1.0, use_tbf=False)
-        self.addLink(D, E, bw=10, delay='10ms', loss=1.0, use_tbf=False)
+        self.addLink(A, B, bw=10, delay='10ms', loss=0.0, use_tbf=False)
+        self.addLink(B, C, bw=10, delay='10ms', loss=0.0, use_tbf=False)
+        self.addLink(B, D, bw=10, delay='10ms', loss=0.0, use_tbf=False)
+        self.addLink(C, D, bw=10, delay='10ms', loss=0.0, use_tbf=False)
+        self.addLink(D, E, bw=10, delay='10ms', loss=0.0, use_tbf=False)
 
 
 terms = []
@@ -164,31 +164,31 @@ def init_he1(self, line):
     time.sleep(3)
 
     # (3) Ping from Node C to Node E with TTL 8
-    terms.append(openTerm(self,
-                          node=C,
-                          title="CLIENT [C]",
-                          geometry="38x20+555+583",
-                          cmd="./ping_client usockC \"Hello from C\" 50 8"))
+    #terms.append(openTerm(self,
+    #                      node=C,
+    #                      title="CLIENT [C]",
+    #                      geometry="38x20+555+583",
+    #                      cmd="./ping_client usockC \"Hello from C\" 50 8"))
 
-    time.sleep(3)
+    #time.sleep(3)
 
     # (4) Ping from A with TTL = 1 should be discarded and generate a timeout
-    terms.append(openTerm(self,
-                          node=A,
-                          title="CLIENT [A]",
-                          geometry="38x20+555+583",
-                          cmd="./ping_client usockA \"Hello with TTL 1\" 50 1"))
+    #terms.append(openTerm(self,
+    #                      node=A,
+    #                      title="CLIENT [A]",
+    #                      geometry="38x20+555+583",
+    #                      cmd="./ping_client usockA \"Hello with TTL 1\" 50 1"))
 
-    time.sleep(3)
+    #time.sleep(3)
 
     # (5) Ping from C with TTL = 3 should make it
-    terms.append(openTerm(self,
-                          node=C,
-                          title="CLIENT [C]",
-                          geometry="38x20+555+583",
-                          cmd="./ping_client usockC \"Hello with TTL 3\" 50 3"))
+    #terms.append(openTerm(self,
+    #                      node=C,
+    #                      title="CLIENT [C]",
+    #                      geometry="38x20+555+583",
+    #                      cmd="./ping_client usockC \"Hello with TTL 3\" 50 3"))
 
-    time.sleep(10)
+    #time.sleep(10)
 
     # After 10 sec. fail the link betwen node B and D for 20 sec.
     # DVR should be able to find another shortest path and reroute the packets
@@ -198,11 +198,11 @@ def init_he1(self, line):
     time.sleep(20)
 
     # (6) Ping from A with default TTL = 8
-    terms.append(openTerm(self,
-                          node=A,
-                          title="CLIENT [A]",
-                          geometry="38x20+555+583",
-                          cmd="./ping_client usockA \"Hello from A\" 50 8"))
+    #terms.append(openTerm(self,
+    #                      node=A,
+    #                      title="CLIENT [A]",
+    #                      geometry="38x20+555+583",
+    #                      cmd="./ping_client usockA \"Hello from A\" 50 8"))
 
     # Bring the link up again. The network should converge again and use
     # A - B - D - E as the shortest path
@@ -210,11 +210,11 @@ def init_he1(self, line):
     time.sleep(20)
 
     # (7) Ping again from A with default TTL = 8
-    terms.append(openTerm(self,
-                          node=A,
-                          title="CLIENT [A]",
-                          geometry="38x20+555+583",
-                          cmd="./ping_client usockA \"Hello from A\" 50 8"))
+    #terms.append(openTerm(self,
+    #                      node=A,
+    #                      title="CLIENT [A]",
+    #                      geometry="38x20+555+583",
+    #                      cmd="./ping_client usockA \"Hello from A\" 50 8"))
 
 
 # Mininet Callbacks
