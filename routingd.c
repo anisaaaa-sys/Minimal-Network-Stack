@@ -74,7 +74,8 @@ int main(int argc, char *argv[]) {
     init_routing_state(&state, local_mip);
     state.mip_sock = sockfd;
 
-    if (debug) printf("[ROUTING] Routing daemon started for MIP %d\n", local_mip);
+    printf("[ROUTING] Routing daemon started for MIP %d, socket fd=%d\n", 
+           local_mip, sockfd);
 
     // Main loop
     time_t last_print = 0;
@@ -83,6 +84,8 @@ int main(int argc, char *argv[]) {
 
         // Periodic tasks
         if (now - state.last_hello_sent >= HELLO_INTERVAL) {
+            printf("[ROUTING] Time to send HELLO: now=%ld, last_hello_sent=%ld, interval=%d\n",
+                   now, state.last_hello_sent, HELLO_INTERVAL);
             send_hello(&state);
         }
 
@@ -118,8 +121,13 @@ int main(int argc, char *argv[]) {
                 break;
             }
 
+            printf("[ROUTING] Received %zd bytes from MIP daemon\n", nread);
+
             // Parse message: [src_mip][ttl][payload...]
-            if (nread < 3) continue;
+            if (nread < 3) {
+                printf("[ROUTING] Message too short (%zd bytes), ignoring\n", nread);
+                continue;
+            }
 
             uint8_t src_mip = buffer[0];
             uint8_t ttl = buffer[1];
@@ -127,9 +135,16 @@ int main(int argc, char *argv[]) {
             uint8_t *payload = buffer + 2;
             size_t payload_len = nread - 2;
 
-            if (payload_len < 1) continue;
+            printf("[ROUTING] Parsed: src_mip=%d, ttl=%d, payload_len=%zu\n", 
+                   src_mip, ttl, payload_len);
+
+            if (payload_len < 1) {
+                printf("[ROUTING] Payload too short (%zu bytes), ignoring\n", payload_len);
+                continue;
+            }
 
             uint8_t msg_type = payload[0];
+            printf("[ROUTING] Message type: 0x%02x\n", msg_type);
 
             switch (msg_type) {
                 case MSG_HELLO:

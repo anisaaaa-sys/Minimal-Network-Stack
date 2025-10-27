@@ -144,14 +144,19 @@ int main(int argc, char *argv[]) {
 
                 if (sdu_type == SDU_TYPE_ROUTING) {
                     // This is the routing daemon
+                    printf("[MIPD] Routing daemon attempting to connect, old fd=%d, new fd=%d\n", 
+                           local_if.routing_daemon_fd, client_fd);
                     local_if.routing_daemon_fd = client_fd;
-                    printf("[MIPD] Routing daemon connected (fd=%d)\n", client_fd);
+                    printf("[MIPD] Routing daemon connected (fd=%d) for MIP %d\n", 
+                           client_fd, local_if.local_mip_addr);
 
                     // Send local MIP address to routing daemon
                     uint8_t mip_info[2];
                     mip_info[0] = local_if.local_mip_addr;
                     mip_info[1] = 0;
-                    send(client_fd, mip_info, 2, 0);
+                    ssize_t sent = send(client_fd, mip_info, 2, 0);
+                    printf("[MIPD] Sent MIP info to routing daemon: mip=%d (sent=%zd bytes)\n", 
+                           local_if.local_mip_addr, sent);
 
                     // Add to epoll
                     struct epoll_event rev = { .events = EPOLLIN, .data.fd = client_fd };

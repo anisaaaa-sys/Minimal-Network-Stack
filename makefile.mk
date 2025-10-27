@@ -3,14 +3,18 @@ CFLAGS = -Wall -Wextra -std=c99 -g
 LDFLAGS = 
 
 # Object files
-MIPD_OBJS = mipd.o #mip_utils.o mip_network.o mip_arp.o mip_unix.o
+MIPD_OBJS = mipd.o mip_utils.o mip_network.o mip_arp.o mip_unix.o mip_forward.o
+ROUTINGD_OBJS = routingd.o routing_utils.o
 PING_CLIENT_OBJS = ping_client.o
 PING_SERVER_OBJS = ping_server.o
 
 # Targets
-all: mipd ping_client ping_server
+all: mipd routingd ping_client ping_server
 
 mipd: $(MIPD_OBJS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+routingd: $(ROUTINGD_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 ping_client: $(PING_CLIENT_OBJS)
@@ -24,6 +28,6 @@ ping_server: $(PING_SERVER_OBJS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f *.o mipd ping_client ping_server
+	rm -f *.o mipd routingd ping_client ping_server
 
 .PHONY: all clean

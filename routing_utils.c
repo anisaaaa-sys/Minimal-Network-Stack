@@ -25,7 +25,14 @@ void init_routing_state(struct routing_state *state, uint8_t local_mip) {
 }
 
 void send_hello(struct routing_state *state) {
-    if (state->mip_sock < 0) return;
+    printf("[ROUTING] send_hello called for MIP %d, mip_sock=%d\n", 
+           state->local_mip, state->mip_sock);
+    
+    if (state->mip_sock < 0) {
+        printf("[ROUTING] ERROR: mip_sock is invalid (%d), cannot send HELLO\n", 
+               state->mip_sock);
+        return;
+    }
 
     // HELLO message format: [dest=255][ttl=0][MSG_HELLO][local_mip]
     uint8_t buffer[4];
@@ -34,11 +41,15 @@ void send_hello(struct routing_state *state) {
     buffer[2] = MSG_HELLO;
     buffer[3] = state->local_mip;
 
+    printf("[ROUTING] Sending HELLO: dest=255, ttl=0, msg_type=0x%02x, local_mip=%d\n",
+           MSG_HELLO, state->local_mip);
+
     ssize_t sent = send(state->mip_sock, buffer, 4, 0);
     if (sent < 0) {
         perror("send_hello");
     } else {
-        printf("[ROUTING] Sent HELLO broadcast from MIP %d\n", state->local_mip);
+        printf("[ROUTING] Sent HELLO broadcast from MIP %d (%zd bytes)\n", 
+               state->local_mip, sent);
     }
 
     state->last_hello_sent = time(NULL);
@@ -67,7 +78,7 @@ void send_update(struct routing_state *state) {
         
         // Add each route with poisoned reverse
         for (int j = 0; j < state->route_count; j++) {
-            if (!state->routes[i].valid) continue;
+            if (!state->routes[j].valid) continue;
             if (offset + 2 > MAX_SDU_SIZE - 1) break;
 
             uint8_t dest = state->routes[j].dest;

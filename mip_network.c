@@ -213,6 +213,9 @@ int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet,
 
     /* Handle ROUTING packets */
     if (sdu_type == SDU_TYPE_ROUTING) {
+        printf("[MIPD] Received routing packet from MIP %d, len=%zu\n", 
+               mip_hdr->src, sdu_len_bytes);
+        
         if (ifs->routing_daemon_fd >= 0) {
             // Forward to routing daemon: [src_mip][ttl][payload]
             uint8_t buffer[MAX_SDU_SIZE];
@@ -223,13 +226,18 @@ int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet,
                                sdu_len_bytes : (MAX_SDU_SIZE - 2);
             memcpy(buffer + 2, sdu, copy_len);
 
+            printf("[MIPD] Forwarding %zu bytes to routing daemon (fd=%d)\n", 
+                   copy_len + 2, ifs->routing_daemon_fd);
+
             ssize_t sent = send(ifs->routing_daemon_fd, buffer, copy_len + 2, 0);
-                if (sent < 0) {
-                    perror("forward to routing daemon");
-                } else {
-                    printf("[MIPD] Forwarded to routing daemon\n");
-                }
+            if (sent < 0) {
+                perror("forward to routing daemon");
+            } else {
+                printf("[MIPD] Successfully forwarded %zd bytes to routing daemon\n", sent);
             }
+        } else {
+            printf("[MIPD] No routing daemon connected (fd=%d)\n", ifs->routing_daemon_fd);
+        }
         return 0;
     }
 
