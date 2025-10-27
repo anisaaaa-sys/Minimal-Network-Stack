@@ -108,19 +108,22 @@ void handle_route_response(struct ifs_data *ifs, const uint8_t *payload, size_t 
 void forward_mip_packet(struct ifs_data *ifs, uint8_t dest_mip, uint8_t src_mip,
                         uint8_t ttl, uint8_t sdu_type, const uint8_t *sdu, 
                         size_t sdu_len) {
+    printf("[FORWARD] ===== FORWARDING PACKET =====\n");
     printf("[FORWARD] Request to forward packet: dest=%d, src=%d, TTL=%d, type=0x%02x\n",
             dest_mip, src_mip, ttl, sdu_type);
+    printf("[FORWARD] Routing daemon fd: %d\n", ifs->routing_daemon_fd);
     
     // Check TTL
     if (ttl == 0) {
-        printf("[FORWARD] TTL expired, dropping packet\n");
+        printf("[FORWARD] TTL expired (TTL=0), dropping packet\n");
         return;
     }
 
     // Decrement TTL
     ttl--;
+    printf("[FORWARD] Decremented TTL: %d -> %d\n", ttl + 1, ttl);
     if (ttl == 0) {
-        printf("[FORWARD] TTL would become 0, dropping packet\n");
+        printf("[FORWARD] TTL would become 0 after decrement, dropping packet\n");
         return;
     }
 

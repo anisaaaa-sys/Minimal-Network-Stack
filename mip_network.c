@@ -203,9 +203,22 @@ int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet,
 
     /* Check if packet is for us (or broadcast) */
     if (mip_hdr->dest != ifs->local_mip_addr && mip_hdr->dest != 255) {
-        printf("[MIPD] Packet not for us (dest %u), forwarding...\n", 
-               mip_hdr->dest);
+        const char *type_name = (sdu_type == SDU_TYPE_PING) ? "PING" :
+                                (sdu_type == SDU_TYPE_ROUTING) ? "ROUTING" :
+                                (sdu_type == SDU_TYPE_ARP) ? "ARP" : "UNKNOWN";
+        
+        printf("\n[MIPD] ========== FORWARDING %s PACKET ==========\n", type_name);
+        printf("[MIPD] Our MIP=%u, Packet dest=%u (not for us)\n", 
+               ifs->local_mip_addr, mip_hdr->dest);
+        printf("[MIPD] Packet: src=%u -> dest=%u, TTL=%u, type=0x%02x (%s)\n",
+               mip_hdr->src, mip_hdr->dest, ttl, sdu_type, type_name);
+        
+        if (sdu_type == SDU_TYPE_PING && sdu_len_bytes > 0) {
+            printf("[MIPD] PING payload: '%.*s'\n", (int)(sdu_len_bytes < 40 ? sdu_len_bytes : 40), sdu);
+        }
+        
         forward_mip_packet(ifs, mip_hdr->dest, mip_hdr->src, ttl, sdu_type, sdu, sdu_len_bytes);
+        printf("[MIPD] ========== END FORWARDING %s ==========\n\n", type_name);
         return 0;
     }
 

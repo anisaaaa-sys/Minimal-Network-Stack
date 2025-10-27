@@ -152,7 +152,11 @@ int main(int argc, char *argv[]) {
             }
 
             uint8_t msg_type = payload[0];
-            printf("[ROUTING] Message type: 0x%02x\n", msg_type);
+            
+            // Only log non-HELLO/UPDATE messages to reduce spam
+            if (msg_type != MSG_HELLO && msg_type != MSG_UPDATE) {
+                printf("[ROUTING] Message type: 0x%02x (payload_len=%zu)\n", msg_type, payload_len);
+            }
 
             switch (msg_type) {
                 case MSG_HELLO:
@@ -166,10 +170,19 @@ int main(int argc, char *argv[]) {
                     break;
                 
                 case 0x52: // 'R' - Route request
+                printf("[ROUTING] Got 'R' message, checking if it's a route request...\n");
+                printf("[ROUTING] payload_len=%zu, need >=4\n", payload_len);
+                if (payload_len >= 4) {
+                    printf("[ROUTING] payload[1]=0x%02x (need 0x45), payload[2]=0x%02x (need 0x51)\n",
+                           payload[1], payload[2]);
+                }
                 if (payload_len >= 4 && payload[1] == 0x45 && payload[2] == 0x51) {
                     // REQ format: ['R']['E']['Q'][dest_mip]
                     uint8_t dest_mip = payload[3];
+                    printf("[ROUTING] ***** ROUTE REQUEST for MIP %d *****\n", dest_mip);
                     handle_route_request(&state, dest_mip);
+                } else {
+                    printf("[ROUTING] Not a valid route request\n");
                 }
                 break;
             
