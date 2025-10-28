@@ -93,8 +93,13 @@ int main(int argc, char *argv[]) {
 
     // Main loop
     time_t last_print = 0;
+    time_t start_time = time(NULL);
     while (1) {
         time_t now = time(NULL);
+        
+        // Fast start mode: send UPDATEs every 1 second for first 10 seconds
+        int uptime = (int)(now - start_time);
+        int update_interval = (uptime < 10) ? 1 : UPDATE_INTERVAL;
 
         // Periodic tasks
         if (now - state.last_hello_sent >= HELLO_INTERVAL) {
@@ -103,7 +108,7 @@ int main(int argc, char *argv[]) {
             send_hello(&state);
         }
 
-        if (now - state.last_update_sent >= UPDATE_INTERVAL) {
+        if (now - state.last_update_sent >= update_interval) {
             send_update(&state);
         }
 

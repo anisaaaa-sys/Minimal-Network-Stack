@@ -69,7 +69,7 @@ void send_update(struct routing_state *state) {
         uint8_t buffer[MAX_SDU_SIZE];
         int offset = 0;
 
-        buffer[offset++] = neighbor_mip;   // Destination
+        buffer[offset++] = neighbor_mip;   // Destination (unicast to specific neighbor)
         buffer[offset++] = 0;              // TTL
         buffer[offset++] = MSG_UPDATE;
 
@@ -88,6 +88,11 @@ void send_update(struct routing_state *state) {
             // advertise infinite metric to prevent loops
             if (state->routes[j].next_hop == neighbor_mip) {
                 metric = INFINITY_METRIC;
+                printf("[ROUTING]   Poison: dest %d, metric INFINITY (next_hop=%d)\n", 
+                       dest, neighbor_mip);
+            } else {
+                printf("[ROUTING]   Advertise: dest %d, metric %d (via %d)\n",
+                       dest, metric, state->routes[j].next_hop);
             }
 
             buffer[offset++] = dest;
@@ -131,10 +136,11 @@ void handle_hello(struct routing_state *state, uint8_t from_mip) {
         state->neighbors[state->neighbor_count].valid = 1;
         state->neighbor_count++;
         printf("[ROUTING] Added new neighbor: MIP %d\n", from_mip);
-        
-        // Add direct route to neighbor
-        add_or_update_route(state, from_mip, from_mip, 1);
     }
+    
+    // Always add/update direct route to neighbor (metric 1)
+    // This ensures direct routes are always refreshed and can overwrite worse routes
+    add_or_update_route(state, from_mip, from_mip, 1);
 }
 
 void handle_update(struct routing_state *state, uint8_t from_mip, 
@@ -159,19 +165,34 @@ void handle_update(struct routing_state *state, uint8_t from_mip,
         struct route_entry *existing = lookup_route(state, dest);
 
         if (existing) {
-            // Update if new route is better or if current route goes through from_mip
-            if (new_metric < existing->metric || existing->next_hop == from_mip) {
+            // Case 1: New route is strictly better - always accept
+            if (new_metric < existing->metric) {
                 if (new_metric < INFINITY_METRIC) {
                     existing->next_hop = from_mip;
                     existing->metric = new_metric;
                     existing->last_update = time(NULL);
-                    printf("[ROUTING] Updated route to MIP %d via %d (metric %d)\n",
+                    printf("[ROUTING] Updated route to MIP %d via %d (metric %d, was %d)\n",
+                            dest, from_mip, new_metric, existing->metric);
+                }
+            }
+            // Case 2: Update from current next hop - refresh or invalidate
+            else if (existing->next_hop == from_mip) {
+                if (new_metric < INFINITY_METRIC) {
+                    // Refresh route (even if metric is same or worse from same next hop)
+                    existing->metric = new_metric;
+                    existing->last_update = time(NULL);
+                    printf("[ROUTING] Refreshed route to MIP %d via %d (metric %d)\n",
                             dest, from_mip, new_metric);
-                } else if (existing->next_hop == from_mip) {
+                } else {
                     // Route became unreachable
                     existing->valid = 0;
                     printf("[ROUTING] Route to MIP %d became unreachable\n", dest);
                 }
+            }
+            // Case 3: Worse or equal route from different next hop - ignore
+            else {
+                printf("[ROUTING] Ignoring route to MIP %d via %d (metric %d, have better via %d metric %d)\n",
+                        dest, from_mip, new_metric, existing->next_hop, existing->metric);
             }
         } else {
             // New route
@@ -271,17 +292,39 @@ struct route_entry* lookup_route(struct routing_state *state, uint8_t dest) {
 
 void add_or_update_route(struct routing_state *state, uint8_t dest, 
                          uint8_t next_hop, uint8_t metric) {
+    // Check if new next_hop is a direct neighbor
+    int new_is_neighbor = 0;
+    for (int j = 0; j < state->neighbor_count; j++) {
+        if (state->neighbors[j].valid && state->neighbors[j].mip_addr == next_hop) {
+            new_is_neighbor = 1;
+            break;
+        }
+    }
+    
     // Try to find existing route
     for (int i = 0; i < state->route_count; i++) {
         if (state->routes[i].dest == dest) {
-            // Only update if new route is better OR if it's from the same next_hop (refresh)
-            if (metric < state->routes[i].metric || next_hop == state->routes[i].next_hop) {
+            // Check if existing next_hop is a direct neighbor
+            int existing_is_neighbor = 0;
+            for (int j = 0; j < state->neighbor_count; j++) {
+                if (state->neighbors[j].valid && state->neighbors[j].mip_addr == state->routes[i].next_hop) {
+                    existing_is_neighbor = 1;
+                    break;
+                }
+            }
+            
+            // Update if:
+            // 1. New metric is strictly better
+            // 2. Same metric but new next hop is a direct neighbor and current is not
+            // 3. Update from same next hop (refresh)
+            if (metric < state->routes[i].metric ||
+                (metric == state->routes[i].metric && new_is_neighbor && !existing_is_neighbor) ||
+                next_hop == state->routes[i].next_hop) {
                 state->routes[i].next_hop = next_hop;
                 state->routes[i].metric = metric;
                 state->routes[i].last_update = time(NULL);
                 state->routes[i].valid = 1;
             }
-            // If new route is worse and from different next_hop, keep existing route
             return;
         }
     }

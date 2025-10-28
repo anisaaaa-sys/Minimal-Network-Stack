@@ -193,6 +193,35 @@ int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet,
     printf("[MIPD] From MIP %u to MIP %u, TTL=%u, type=0x%02x, len=%zu\n",
            mip_hdr->src, mip_hdr->dest, ttl, sdu_type, sdu_len_bytes);
 
+    /* Learn source MAC→MIP mapping from any received packet (automatic ARP learning) */
+    if (mip_hdr->src != ifs->local_mip_addr) {
+        int found = 0;
+        for (int i = 0; i < ifs->arp.entry_count; i++) {
+            if (ifs->arp.entries[i].mip_addr == mip_hdr->src) {
+                // Update existing entry
+                memcpy(ifs->arp.entries[i].mac_addr, frame_hdr->src_addr, 6);
+                ifs->arp.entries[i].if_index = if_index;
+                found = 1;
+                printf("[ARP] Updated cache: MIP %u -> MAC %02x:%02x:%02x:%02x:%02x:%02x (if %d)\n",
+                       mip_hdr->src, frame_hdr->src_addr[0], frame_hdr->src_addr[1],
+                       frame_hdr->src_addr[2], frame_hdr->src_addr[3],
+                       frame_hdr->src_addr[4], frame_hdr->src_addr[5], if_index);
+                break;
+            }
+        }
+        if (!found && ifs->arp.entry_count < ARP_CACHE_SIZE) {
+            // Add new entry
+            ifs->arp.entries[ifs->arp.entry_count].mip_addr = mip_hdr->src;
+            memcpy(ifs->arp.entries[ifs->arp.entry_count].mac_addr, frame_hdr->src_addr, 6);
+            ifs->arp.entries[ifs->arp.entry_count].if_index = if_index;
+            printf("[ARP] Learned new mapping: MIP %u -> MAC %02x:%02x:%02x:%02x:%02x:%02x (if %d)\n",
+                   mip_hdr->src, frame_hdr->src_addr[0], frame_hdr->src_addr[1],
+                   frame_hdr->src_addr[2], frame_hdr->src_addr[3],
+                   frame_hdr->src_addr[4], frame_hdr->src_addr[5], if_index);
+            ifs->arp.entry_count++;
+        }
+    }
+
     /* Verify we have enough bytes */
     size_t avail_sdu_bytes = len - (sizeof(struct ether_frame) + sizeof(struct mip_header));
     if (sdu_len_bytes > avail_sdu_bytes) {
