@@ -1,5 +1,3 @@
-#define _DEFAULT_SOURCE
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -48,8 +46,6 @@ int main(int argc, char *argv[]){
     }
 
     printf("[CLIENT] Connected to mipd UNIX socket! fd=%d\n", sockfd);
-    
-    usleep(100000);
 
     /* Create PING message */
     uint8_t buffer[MAX_SDU_SIZE];
