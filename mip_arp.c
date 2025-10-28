@@ -249,6 +249,22 @@ int handle_arp_packet(struct ifs_data *ifs, const uint8_t *sdu,
             /* Immediately flush any pending messages that were waiting on this ARP.
                We send them *now* using the interface the ARP RESP arrived on (per spec step 6). */
             printf("[ARP] Checking for pending pings waiting for MIP %d\n", mip_addr);
+            
+            // Also need to trigger pending forwards that were waiting for this ARP
+            // Retry forwarding for any pending forwards that might use this new ARP entry
+            printf("[ARP] Checking for pending forwards that might use ARP for MIP %d\n", mip_addr);
+            for (int fwd_idx = 0; fwd_idx < ifs->pending_forward_count; fwd_idx++) {
+                struct pending_forward *pf = &ifs->pending_forwards[fwd_idx];
+                if (!pf->active) continue;
+                
+                printf("[ARP] Found pending forward: dest=%d src=%d, retrying with new ARP entry...\n",
+                       pf->dest_mip, pf->src_mip);
+                
+                // Send a dummy route request to trigger route lookup again
+                // This will cause handle_route_response to be called, which will retry the forward
+                send_route_request(ifs, pf->dest_mip);
+            }
+            
             for (int i = 0; i < ifs->pending_ping_count; i++) {
                 struct pending_ping *pending = &ifs->pending_pings[i];
 

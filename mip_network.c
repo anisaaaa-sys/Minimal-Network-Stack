@@ -207,6 +207,9 @@ int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet,
     }
 
     /* Check if packet is for us (or broadcast) */
+    printf("[MIPD] Checking if packet is for us: our_mip=%u, packet_dest=%u\n",
+           ifs->local_mip_addr, mip_hdr->dest);
+    
     if (mip_hdr->dest != ifs->local_mip_addr && mip_hdr->dest != 255) {
         const char *type_name = (sdu_type == SDU_TYPE_PING) ? "PING" :
                                 (sdu_type == SDU_TYPE_ROUTING) ? "ROUTING" :
@@ -332,22 +335,29 @@ int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet,
             if (to_copy > sizeof(response) - 2) to_copy = sizeof(response) - 2;
             memcpy(response + 2, sdu, to_copy);
  
-            printf("[MIPD] Sending PONG to client fd=%d\n", target_fd);
+            printf("[MIPD] *** DELIVERING PONG to client fd=%d (idx=%d) ***\n", target_fd, target_index);
+            printf("[MIPD] PONG content: '%.*s'\n", (int)(to_copy), sdu);
+            
             ssize_t written = write(target_fd, response, to_copy + 2);
             if (written < 0) {
                 perror("write to client");
-                close(target_fd);
+                printf("[MIPD] ERROR: Failed to write PONG to client fd=%d\n", target_fd);
             } else {
-                printf("[MIPD] Delivered PONG to client\n");
+                printf("[MIPD] ✓ Successfully delivered %zd bytes PONG to client fd=%d\n", written, target_fd);
             }
              
             /* Close client connection after delivering PONG */
+            printf("[MIPD] Closing client connection fd=%d\n", target_fd);
             close(target_fd);  
 
+            /* Remove from pending list */
             if (target_index >= 0) {
+                printf("[MIPD] Removing pending_ping[%d], shifting %d entries\n", 
+                       target_index, ifs->pending_ping_count - target_index - 1);
                 for (int j = target_index; j < ifs->pending_ping_count - 1; j++)
                     ifs->pending_pings[j] = ifs->pending_pings[j + 1];
                 ifs->pending_ping_count--;
+                printf("[MIPD] New pending_ping_count: %d\n", ifs->pending_ping_count);
             }
         } else {
             /* PING request - send to server */

@@ -191,17 +191,19 @@ void forward_mip_packet(struct ifs_data *ifs, uint8_t dest_mip, uint8_t src_mip,
     }
 
     // Check if we already have a pending forward for this destination
+    // (to avoid sending duplicate route requests)
     int found_pending = 0;
     for (int i = 0; i < ifs->pending_forward_count; i++) {
         if (ifs->pending_forwards[i].active &&
             ifs->pending_forwards[i].dest_mip == dest_mip) {
             found_pending = 1;
-            printf("[FORWARD] Already have a pending forward for MIP %d\n", dest_mip);
+            printf("[FORWARD] Already have a pending forward for MIP %d (will batch route lookup)\n", dest_mip);
             break;
         }
     }
 
-    // Add to pending forwards
+    // ALWAYS add to pending forwards (even if we already have one for this dest)
+    // This ensures ALL packets get forwarded, not just the first one
     if (ifs->pending_forward_count < MAX_PENDING_FORWARDS) {
         struct pending_forward *pf = &ifs->pending_forwards[ifs->pending_forward_count];
         pf->dest_mip = dest_mip;
@@ -216,10 +218,16 @@ void forward_mip_packet(struct ifs_data *ifs, uint8_t dest_mip, uint8_t src_mip,
         pf->active = 1;
 
         ifs->pending_forward_count++;
+        printf("[FORWARD] Added packet to pending_forwards[%d] (total=%d)\n", 
+               ifs->pending_forward_count - 1, ifs->pending_forward_count);
 
-        // Request route lookup (only if not already pending)
+        // Request route lookup (only if not already pending for this destination)
+        // This avoids duplicate route requests while ensuring all packets get queued
         if (!found_pending) {
+            printf("[FORWARD] First packet to MIP %d, sending route request\n", dest_mip);
             send_route_request(ifs, dest_mip);
+        } else {
+            printf("[FORWARD] Route request already sent for MIP %d, waiting for response\n", dest_mip);
         }
     } else {
         fprintf(stderr, "[FORWARD] Too many pending forwards, dropping packet\n");

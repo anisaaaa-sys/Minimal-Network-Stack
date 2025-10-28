@@ -274,10 +274,14 @@ void add_or_update_route(struct routing_state *state, uint8_t dest,
     // Try to find existing route
     for (int i = 0; i < state->route_count; i++) {
         if (state->routes[i].dest == dest) {
-            state->routes[i].next_hop = next_hop;
-            state->routes[i].metric = metric;
-            state->routes[i].last_update = time(NULL);
-            state->routes[i].valid = 1;
+            // Only update if new route is better OR if it's from the same next_hop (refresh)
+            if (metric < state->routes[i].metric || next_hop == state->routes[i].next_hop) {
+                state->routes[i].next_hop = next_hop;
+                state->routes[i].metric = metric;
+                state->routes[i].last_update = time(NULL);
+                state->routes[i].valid = 1;
+            }
+            // If new route is worse and from different next_hop, keep existing route
             return;
         }
     }

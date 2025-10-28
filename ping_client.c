@@ -76,7 +76,7 @@ int main(int argc, char *argv[]){
     printf("[CLIENT]Sent PING to MIP %d: %s\n", dest_mip, buffer + 1);
 
     struct timeval timeout;
-    timeout.tv_sec = 10; // 10 second timeout
+    timeout.tv_sec = 3; // 3 second timeout
     timeout.tv_usec = 0;
     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
         perror("setsockopt");

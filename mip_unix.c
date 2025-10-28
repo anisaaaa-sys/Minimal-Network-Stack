@@ -155,10 +155,26 @@ int handle_unix_connection(struct ifs_data *ifs, int client_fd, int debug) {
     printf("[MIPD] ********** CHECKING ARP CACHE FOR MIP %d **********\n", dest_mip);
     printf("[MIPD] ARP cache count=%d\n", ifs->arp.entry_count);
     
+    // Debug: Print entire ARP cache
+    printf("[MIPD] === ARP CACHE CONTENTS ===\n");
+    for (int i = 0; i < ifs->arp.entry_count; i++) {
+        printf("[MIPD]   [%d] MIP=%d MAC=%02x:%02x:%02x:%02x:%02x:%02x if=%d\n",
+               i, ifs->arp.entries[i].mip_addr,
+               ifs->arp.entries[i].mac_addr[0], ifs->arp.entries[i].mac_addr[1],
+               ifs->arp.entries[i].mac_addr[2], ifs->arp.entries[i].mac_addr[3],
+               ifs->arp.entries[i].mac_addr[4], ifs->arp.entries[i].mac_addr[5],
+               ifs->arp.entries[i].if_index);
+    }
+    printf("[MIPD] === END ARP CACHE ===\n");
+    
     int arp_found = arp_cache_lookup(ifs->arp.entries, ifs->arp.entry_count,
                             dest_mip, dst_mac, &send_if);
 
-    printf("[MIPD] ARP lookup result: arp_found=%d\n", arp_found);
+    printf("[MIPD] ARP lookup result for MIP %d: arp_found=%d\n", dest_mip, arp_found);
+    if (arp_found == 0) {
+        printf("[MIPD] Found in ARP cache: MAC=%02x:%02x:%02x:%02x:%02x:%02x if=%d\n",
+               dst_mac[0], dst_mac[1], dst_mac[2], dst_mac[3], dst_mac[4], dst_mac[5], send_if);
+    }
     
     if (arp_found != 0) {
         // Not in cache: use forwarding engine for multi-hop routing

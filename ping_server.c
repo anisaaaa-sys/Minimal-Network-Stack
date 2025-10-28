@@ -65,7 +65,7 @@ int main(int argc, char *argv[]) {
             uint8_t reply_buffer[MAX_SDU_SIZE];
 
             reply_buffer[0] = src_mip;
-            reply_buffer[1] = src_ttl;
+            reply_buffer[1] = 0;  // TTL=0 means use default (let MIP daemon set it)
             sprintf((char*)(reply_buffer + 2), "PONG:%.*s", (int)(msg_len - 5), msg + 5);
             int reply_len = strlen((char*)(reply_buffer + 2));
 
