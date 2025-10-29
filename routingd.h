@@ -6,10 +6,10 @@
 
 #define MAX_ROUTES 256
 #define MAX_NEIGHBORS 16
-#define HELLO_INTERVAL 10        // Send HELLO every 10 seconds
+#define HELLO_INTERVAL 1        // Send HELLO every 1 second
 #define UPDATE_INTERVAL 5       // Send routing updates every 5 seconds
-#define NEIGHBOR_TIMEOUT 15      // Consider neighbor dead after 15 seconds 
-#define ROUTE_TIMEOUT 15        // Remove route after 15 seconds of no updates
+#define NEIGHBOR_TIMEOUT 15     // Consider neighbor dead after 15 seconds
+#define ROUTE_TIMEOUT 30        // Remove route after 30 seconds of no updates
 #define INFINITY_METRIC 16      // Metric considered unreachable
 
 /* Message types for routing protocol */
