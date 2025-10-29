@@ -98,44 +98,37 @@ int handle_unix_connection(struct ifs_data *ifs, int client_fd, int debug) {
         if (nread < 0) {
             if (debug) perror("handle_unix_connection: read");
         } else {
-            // nread == 0: Client closed the socket
             if (debug) printf("[MIPD] Client closed connection. Closing fd %d\n", client_fd);
         }
         close(client_fd);
         return -1;
     } 
 
-    // SPECIAL COMMAND: Check if first byte is 0xFF (clear ARP cache command)
     if (nread == 1 && buffer[0] == 0xFF) {
         ifs->arp.entry_count = 0;
-        
-        // Send acknowledgment back
         uint8_t ack = SDU_TYPE_ARP;
         write(client_fd, &ack, 1);
         close(client_fd);
         return 0;
     }
 
-    /* Message format: [dest_mip][ttl][sdu...] */
     if (nread < 2) {
         fprintf(stderr, "handle_unix_connection: message too short\n");
         close(client_fd);
         return -1;
     }
 
-    uint8_t dest_mip = buffer[0];       // First byte is destination MIP address
-    uint8_t ttl = buffer[1];            // Second byte is TTL (0 = use default)
-    const uint8_t *sdu = buffer + 2;    // Rest is the message
+    uint8_t dest_mip = buffer[0];
+    uint8_t ttl = buffer[1];
+    const uint8_t *sdu = buffer + 2;
     size_t sdu_len_bytes = nread - 2;
 
-    // Check if destination is local (loopback not supported)
     if (dest_mip == ifs->local_mip_addr) {
         close(client_fd);
         return -1;
     }
 
-    // PAD SDU to 32-bit boundary
-    size_t padded_sdu_len = ((sdu_len_bytes + 3) / 4) * 4; // Round up to multiple of 4
+    size_t padded_sdu_len = ((sdu_len_bytes + 3) / 4) * 4;
     uint8_t *padded_sdu = malloc(padded_sdu_len);
     if (!padded_sdu) {
         fprintf(stderr, "Memory allocation failed\n");
@@ -193,16 +186,13 @@ int handle_unix_connection(struct ifs_data *ifs, int client_fd, int debug) {
                           SDU_TYPE_PING, sdu, sdu_len_bytes);
         
         free(padded_sdu);
-        // Keep client connection open for PONG
         return 1; 
     } else {
-        // In cache: send directly using cached ARP entry
         printf("\n[MIPD] Received PING from client: MIP %d -> %d (TTL=%d)\n",
                ifs->local_mip_addr, dest_mip, pending->ttl);
         printf("[MIPD] Payload: \"%.*s\"\n", (int)sdu_len_bytes, sdu);
         printf("[MIPD] Sending using cached ARP entry\n");
         
-        /* Send the MIP packet with specified TTL */
         int rc = send_mip_packet(ifs, send_if, dest_mip, SDU_TYPE_PING, 
                                  padded_sdu, padded_sdu_len, pending->ttl, 0);
     

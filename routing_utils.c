@@ -46,7 +46,6 @@ void init_routing_state(struct routing_state *state, uint8_t local_mip) {
     state->last_hello_sent = 0;
     state->last_update_sent = 0;
 
-    // Add route to self with metric 0
     add_or_update_route(state, local_mip, local_mip, 0);
 }
 
