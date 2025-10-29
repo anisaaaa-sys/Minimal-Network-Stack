@@ -78,10 +78,20 @@ void handle_route_response(struct ifs_data *ifs, const uint8_t *payload, size_t 
         
         if (arp_found != 0) {
             // Next hop not in ARP cache, send ARP request
-            printf("[FORWARD] Next hop MIP %d not in ARP cache, broadcasting ARP\n", next_hop);
+            printf("[FORWARD] Next hop MIP %d not in ARP cache, broadcasting ARP on %d interfaces\n", 
+                   next_hop, ifs->ifn);
+            int arp_sent_count = 0;
             for (int j = 0; j < ifs->ifn; j++) {
-                send_arp_request(ifs, j, next_hop);
+                int rc = send_arp_request(ifs, j, next_hop);
+                if (rc > 0) {
+                    arp_sent_count++;
+                    printf("[FORWARD] ARP request sent on interface %d\n", j);
+                } else {
+                    printf("[FORWARD] ARP request FAILED on interface %d (errno=%d)\n", j, errno);
+                }
             }
+            printf("[FORWARD] Sent ARP requests on %d/%d interfaces, keeping packet pending\n",
+                   arp_sent_count, ifs->ifn);
             // Keep packet pending
             continue;
         }
@@ -147,11 +157,13 @@ void handle_route_response(struct ifs_data *ifs, const uint8_t *payload, size_t 
         }
         
         if (rc < 0) {
-            fprintf(stderr, "[FORWARD] Failed to forward packet to MIP %d\n", pf->dest_mip);
+            fprintf(stderr, "[FORWARD] Failed to forward packet to MIP %d (errno=%d: %s)\n", 
+                    pf->dest_mip, errno, strerror(errno));
+            pf->active = 0;
         } else {
             printf("[FORWARD] Successfully forwarded packet to MIP %d\n", pf->dest_mip);
+            pf->active = 0;
         }
-        pf->active = 0;
     }
 
     // Compact pending forwards list
