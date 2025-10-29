@@ -161,12 +161,11 @@ int main(int argc, char *argv[]) {
                 continue;
             }
 
-            // Check if this is an upper layer identification
-            // Use select to wait for data with timeout
+            /* Use select to check if upper layer identification or client ping */
             fd_set readfds;
             FD_ZERO(&readfds);
             FD_SET(client_fd, &readfds);
-            struct timeval tv = {0, 200000}; // 200ms timeout
+            struct timeval tv = {0, 200000};
             
             int sel = select(client_fd + 1, &readfds, NULL, NULL, &tv);
             
@@ -177,28 +176,22 @@ int main(int argc, char *argv[]) {
             }
             
             if (peek == 1) {
-                // Single byte = SDU type identification (but only if it's a valid SDU type)
                 uint8_t first_byte = (uint8_t)peekbuf[0];
                 
-                // SDU types are in range [0, 7], so check if this is a valid identification
                 if (first_byte <= 7) {
-                    // This is an identification byte
                     uint8_t sdu_type;
                     recv(client_fd, &sdu_type, 1, 0);
 
                     if (sdu_type == SDU_TYPE_ROUTING) {
-                        // This is the routing daemon
                         local_if.routing_daemon_fd = client_fd;
                         printf("\n[MIPD] Routing daemon connected for MIP %d\n", 
                                local_if.local_mip_addr);
 
-                        // Send local MIP address to routing daemon
                         uint8_t mip_info[2];
                         mip_info[0] = local_if.local_mip_addr;
                         mip_info[1] = 0;
                         send(client_fd, mip_info, 2, 0);
 
-                        // Add to epoll
                         struct epoll_event rev = { .events = EPOLLIN, .data.fd = client_fd };
                         if (epoll_ctl(epollfd, EPOLL_CTL_ADD, client_fd, &rev) < 0) {
                             perror("epoll_ctl add routing_fd");
@@ -206,7 +199,6 @@ int main(int argc, char *argv[]) {
                             if (local_if.routing_daemon_fd == client_fd) local_if.routing_daemon_fd = -1;
                         }
                     } else {
-                        // Other upper layer (store for later)
                         if (local_if.upper_layer_count < MAX_UPPER_LAYERS) {
                             local_if.upper_layers[local_if.upper_layer_count].fd = client_fd;
                             local_if.upper_layers[local_if.upper_layer_count].sdu_type = sdu_type;
@@ -218,15 +210,11 @@ int main(int argc, char *argv[]) {
                     }
                     continue;
                 } else {
-                    // peek == 1 but first_byte > 7, so it's not an identification
-                    // Treat it as a client connection with data waiting
                     printf("[MIPD] Single byte (0x%02x) but not valid SDU type, treating as client\n", first_byte);
-                    // Fall through to handle as client connection
                 }
             }
             
             if (peek >= 1) {
-                // Data waiting = client ping request (or peek==1 with invalid SDU type)
                 printf("\n[MIPD] PING client connected for MIP %d\n", local_if.local_mip_addr);
                 
                 struct epoll_event cev = { .events = EPOLLIN, .data.fd = client_fd };
@@ -242,7 +230,6 @@ int main(int argc, char *argv[]) {
                     close(client_fd);
                 }
             } else {
-                // No data = server connection
                 printf("\n[MIPD] PING server connected for MIP %d\n", local_if.local_mip_addr);
                 if (local_if.server_fd < 0) {
                     local_if.server_fd = client_fd;

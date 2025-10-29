@@ -60,7 +60,6 @@ int main(int argc, char *argv[]) {
 
     const char *sock_path = argv[arg_idx];
 
-    // Connect to MIP daemon
     int sockfd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
     if (sockfd < 0) {
         perror("socket");
@@ -83,7 +82,6 @@ int main(int argc, char *argv[]) {
         fflush(stdout);
     }
 
-    // Identify as routing daemon
     printf("[ROUTING] Sending identification to MIP daemon (SDU_TYPE=0x%02x)\n", 
            SDU_TYPE_ROUTING);
     uint8_t ident = SDU_TYPE_ROUTING;
@@ -94,7 +92,6 @@ int main(int argc, char *argv[]) {
     }
     printf("[ROUTING] Sent identification, waiting for MIP address...\n");
 
-    // Read local MIP address from daemon
     uint8_t mip_info[2];
     ssize_t n = recv(sockfd, mip_info, 2, 0);
     if (n < 1) {
@@ -115,13 +112,10 @@ int main(int argc, char *argv[]) {
            local_mip, sockfd);
     fflush(stdout);
 
-    // Send initial HELLO and UPDATE immediately to speed up convergence
     printf("[ROUTING] Sending initial HELLO and UPDATE...\n");
     send_hello(&state);
     send_update(&state);
     fflush(stdout);
-
-    // Main loop
     time_t last_print = 0;
     time_t start_time = time(NULL);
     while (1) {

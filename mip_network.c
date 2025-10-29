@@ -55,12 +55,10 @@ int send_mip_packet(struct ifs_data *ifs, int if_index,
         return -1;
     }
 
-    // Use default TTL if 0
     if (ttl == 0) {
         ttl = DEFAULT_TTL;
     }
     
-    // Use local MIP address as source if not specified (src_mip == 0)
     if (src_mip == 0) {
         src_mip = ifs->local_mip_addr;
     }
@@ -252,7 +250,6 @@ int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet,
         int found = 0;
         for (int i = 0; i < ifs->arp.entry_count; i++) {
             if (ifs->arp.entries[i].mip_addr == mip_hdr->src) {
-                // Update existing entry
                 memcpy(ifs->arp.entries[i].mac_addr, frame_hdr->src_addr, 6);
                 ifs->arp.entries[i].if_index = if_index;
                 found = 1;
@@ -260,7 +257,6 @@ int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet,
             }
         }
         if (!found && ifs->arp.entry_count < ARP_CACHE_SIZE) {
-            // Add new entry
             ifs->arp.entries[ifs->arp.entry_count].mip_addr = mip_hdr->src;
             memcpy(ifs->arp.entries[ifs->arp.entry_count].mac_addr, frame_hdr->src_addr, 6);
             ifs->arp.entries[ifs->arp.entry_count].if_index = if_index;
@@ -290,13 +286,11 @@ int handle_mip_packet(struct ifs_data *ifs, const uint8_t *packet,
     /* Handle ROUTING packets */
     if (sdu_type == SDU_TYPE_ROUTING) {
         if (ifs->routing_daemon_fd >= 0) {
-            // Determine message type
             const char *msg_type = (sdu_len_bytes > 0 && sdu[0] == 0x01) ? "HELLO" : 
                                    (sdu_len_bytes > 0 && sdu[0] == 0x02) ? "UPDATE" : "ROUTING";
             printf("\n[MIPD] Received %s from MIP %d, forwarding to routing daemon\n", 
                    msg_type, mip_hdr->src);
             
-            // Forward to routing daemon: [src_mip][ttl][payload]
             uint8_t buffer[MAX_SDU_SIZE];
             buffer[0] = mip_hdr->src;
             buffer[1] = ttl;
