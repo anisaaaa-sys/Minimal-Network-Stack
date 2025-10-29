@@ -175,18 +175,46 @@ int handle_unix_connection(struct ifs_data *ifs, int client_fd, int debug) {
         return 1;
     }
 
-    /* Always use forwarding engine for non-local destinations */
-    /* The routing daemon will determine if it's a neighbor or multi-hop */
-    printf("\n[MIPD] Received PING from client: MIP %d -> %d (TTL=%d)\n",
-           ifs->local_mip_addr, dest_mip, (ttl == 0) ? DEFAULT_TTL : ttl);
-    printf("[MIPD] Payload: \"%.*s\"\n", (int)sdu_len_bytes, sdu);
-    printf("[MIPD] Forwarding via routing daemon\n");
+    /* ARP cache lookup */
+    uint8_t dst_mac[6];
+    int send_if = -1;
+    int arp_found = arp_cache_lookup(ifs->arp.entries, ifs->arp.entry_count,
+                            dest_mip, dst_mac, &send_if);
     
-    uint8_t eff_ttl = (ttl == 0) ? DEFAULT_TTL : ttl;
-    forward_mip_packet(ifs, dest_mip, ifs->local_mip_addr, eff_ttl, 
-                      SDU_TYPE_PING, sdu, sdu_len_bytes);
+    if (arp_found != 0) {
+        // Not in cache: use forwarding engine for route lookup
+        printf("\n[MIPD] Received PING from client: MIP %d -> %d (TTL=%d)\n",
+               ifs->local_mip_addr, dest_mip, (ttl == 0) ? DEFAULT_TTL : ttl);
+        printf("[MIPD] Payload: \"%.*s\"\n", (int)sdu_len_bytes, sdu);
+        printf("[MIPD] Forwarding via routing daemon\n");
+        
+        uint8_t eff_ttl = (ttl == 0) ? DEFAULT_TTL : ttl;
+        forward_mip_packet(ifs, dest_mip, ifs->local_mip_addr, eff_ttl, 
+                          SDU_TYPE_PING, sdu, sdu_len_bytes);
+        
+        free(padded_sdu);
+        // Keep client connection open for PONG
+        return 1; 
+    } else {
+        // In cache: send directly using cached ARP entry
+        printf("\n[MIPD] Received PING from client: MIP %d -> %d (TTL=%d)\n",
+               ifs->local_mip_addr, dest_mip, pending->ttl);
+        printf("[MIPD] Payload: \"%.*s\"\n", (int)sdu_len_bytes, sdu);
+        printf("[MIPD] Sending using cached ARP entry\n");
+        
+        /* Send the MIP packet with specified TTL */
+        int rc = send_mip_packet(ifs, send_if, dest_mip, SDU_TYPE_PING, 
+                                 padded_sdu, padded_sdu_len, pending->ttl, 0);
     
-    free(padded_sdu);
-    // Keep client connection open for PONG
-    return 1;
+        free(padded_sdu);
+
+        if (rc < 0) {
+            perror("handle_unix_connection: send_mip_packet");
+            ifs->pending_ping_count--;
+            close(client_fd);
+            return -1;
+        }
+
+        return 1;
+    }
 }
