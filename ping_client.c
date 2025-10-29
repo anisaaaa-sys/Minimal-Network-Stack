@@ -1,3 +1,20 @@
+/**
+ * ping_client.c - MIP PING Client Application
+ * 
+ * Sends a PING message to a specified MIP destination through the MIP daemon
+ * and waits for a PONG response. Calculates and displays round-trip time (RTT).
+ * 
+ * Usage: ping_client <socket_path> <message> <destination_mip> [ttl]
+ * 
+ * Arguments:
+ *   socket_path: Path to MIP daemon's UNIX domain socket
+ *   message: Text message to send (will be prefixed with "PING:")
+ *   destination_mip: Destination MIP address (0-255)
+ *   ttl: Optional Time-To-Live value (default: 15)
+ * 
+ * Returns: 0 on success, 1 on error or timeout
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +30,17 @@
 
 #include "mipd.h" 
 
+/**
+ * Main function for ping client
+ * 
+ * Connects to MIP daemon via UNIX socket, sends PING message with specified
+ * destination and message, waits for PONG response with 1 second timeout,
+ * and calculates round-trip time.
+ * 
+ * Global variables: None
+ * Returns: 0 on successful PING/PONG exchange, 1 on error
+ * Error conditions: Invalid arguments, connection failure, timeout
+ */
 int main(int argc, char *argv[]){
     if (argc < 4) {
         fprintf(stderr, "Usage: %s <socket_lower>, <message>, <destination_host>\n", argv[0]); 
@@ -45,8 +73,6 @@ int main(int argc, char *argv[]){
         exit(1);
     }
 
-    printf("[CLIENT] Connected to mipd UNIX socket! fd=%d\n", sockfd);
-
     /* Create PING message */
     uint8_t buffer[MAX_SDU_SIZE];
     buffer[0] = dest_mip;
@@ -56,8 +82,8 @@ int main(int argc, char *argv[]){
 
     int total_len = ping_len + 2; // +2 for dest_mip byte and ttl bytes
 
-    printf("[CLIENT] Sending %d bytes: dest=%d, TTL=%d, msg='%.*s'\n", 
-           total_len, dest_mip, ttl, ping_len, (char*)(buffer + 2));
+    printf("\n[CLIENT] Sending PING to MIP %d (TTL=%d)\n", dest_mip, (ttl == 0) ? 15 : ttl);
+    printf("[CLIENT] Message: \"%.*s\"\n", ping_len, (char*)(buffer + 2));
 
     struct timeval start_time, end_time;
     gettimeofday(&start_time, NULL);
@@ -68,8 +94,6 @@ int main(int argc, char *argv[]){
         close(sockfd);
         exit(1);
     }
-
-    printf("[CLIENT]Sent PING to MIP %d: %s\n", dest_mip, buffer + 1);
 
     struct timeval timeout;
     timeout.tv_sec = 1; // 1 second timeout
@@ -93,16 +117,16 @@ int main(int argc, char *argv[]){
         long rtt_ms = ((end_time.tv_sec - start_time.tv_sec) * 1000) +
                       ((end_time.tv_usec - start_time.tv_usec) / 1000);
         
-        printf("[CLIENT] Reply from MIP %d: %.*s (RTT: %ld ms)\n",
-                reply_src, (int)reply_len, reply_msg, rtt_ms);
+        printf("\n[CLIENT] Received PONG from MIP %d\n", reply_src);
+        printf("[CLIENT] Message: \"%.*s\"\n", (int)reply_len, reply_msg);
+        printf("[CLIENT] RTT: %ld ms\n", rtt_ms);
     } else if(n == 0) {
-        printf("[CLIENT] Connection closed by mipd\n");
+        printf("\n[CLIENT] Connection closed by mipd\n");
     } else {
-        printf("[CLIENT] Timeout or error waiting for reply\n");
+        printf("\n[CLIENT] Timeout - no reply received\n");
     }
 
     close(sockfd);
-    printf("[CLIENT] Closed socket, exiting\n");
 
     return 0;
 }

@@ -1,3 +1,11 @@
+/**
+ * mip_arp.c - ARP (Address Resolution Protocol) Implementation for MIP
+ * 
+ * Handles ARP request/response messages to resolve MIP addresses to MAC addresses.
+ * Maintains an ARP cache and automatically triggers pending packet transmission
+ * when ARP entries are learned.
+ */
+
 #include <string.h>    /* memcpy */
 #include <stdlib.h>    /* calloc, free */
 #include <stdio.h>     /* printf, perror */
@@ -5,9 +13,23 @@
 #include <arpa/inet.h> /* htons */
 #include <time.h>
 
-
 #include "mipd.h" 
 
+/**
+ * Send ARP request for a given MIP address
+ * ifs: Interface data containing socket and address information
+ * if_index: Interface index to send request on
+ * target_mip: MIP address to resolve
+ * 
+ * Constructs an ARP request packet with broadcast destination and sends
+ * it on the specified interface. The request asks "who has target_mip?"
+ * 
+ * ARP SDU format: [ARP_TYPE_REQ (1 byte)][target_mip (1 byte)]
+ * 
+ * Global variables: ifs->rsock, ifs->addr (reads)
+ * Returns: Number of bytes sent on success, -1 on error
+ * Error conditions: Memory allocation failure, sendmsg failure
+ */
 int send_arp_request(struct ifs_data *ifs, int if_index, uint8_t target_mip) {
     struct ether_frame frame_hdr;
     struct mip_header mip_hdr;
@@ -15,8 +37,6 @@ int send_arp_request(struct ifs_data *ifs, int if_index, uint8_t target_mip) {
     struct msghdr *msg;
     struct iovec msgvec[3];
     ssize_t rc;
-
-    printf("[ARP] Sending ARP request for MIP %d on interface %d\n", target_mip, if_index);
 
     /* ARP SDU format: [ARP_TYPE][MIP_ADDRESS] */
     arp_sdu[0] = ARP_TYPE_REQ;  /* This is a REQUEST */
@@ -63,23 +83,36 @@ int send_arp_request(struct ifs_data *ifs, int if_index, uint8_t target_mip) {
     msg->msg_iov     = msgvec;
 
     /* Send message via RAW socket */
-    printf("[ARP] Preparing ARP request: src_mip=%d target_mip=%d if=%d\n",
-           ifs->local_mip_addr, target_mip, if_index);
     rc = sendmsg(ifs->rsock[if_index], msg, 0);
     if (rc == -1) {
         perror("sendmsg ARP request");
         free(msg);
         return -1;
-    } else printf("[ARP] sendmsg rc=%zd bytes sent on rsock[%d]=%d\n",
-            rc, if_index, ifs->rsock[if_index]);
-
-    printf("[ARP] Sent ARP request (%ld bytes) on interface %d\n", rc, if_index);
+    }
+    
+    printf("[ARP] Requesting MAC for MIP %d\n", target_mip);
 
     /* Free the allocated message struct */
     free(msg);
     return rc;
 }
 
+/**
+ * Send ARP response to a requester
+ * ifs: Interface data containing local MIP and MAC information
+ * if_index: Interface index to send response on
+ * requester_mip: MIP address of the node that sent the request
+ * requester_mac: MAC address of the requester (destination for unicast)
+ * 
+ * Constructs an ARP response packet containing this node's MIP-to-MAC mapping
+ * and sends it directly to the requester (unicast).
+ * 
+ * ARP SDU format: [ARP_TYPE_RESP (1 byte)][local_mip (1 byte)]
+ * 
+ * Global variables: ifs->rsock, ifs->addr, ifs->local_mip_addr (reads)
+ * Returns: Number of bytes sent on success, -1 on error
+ * Error conditions: Memory allocation failure, sendmsg failure
+ */
 int send_arp_response(struct ifs_data *ifs, int if_index, uint8_t requester_mip, 
                       uint8_t requester_mac[6]) {
     struct ether_frame frame_hdr;
@@ -88,9 +121,6 @@ int send_arp_response(struct ifs_data *ifs, int if_index, uint8_t requester_mip,
     struct msghdr *msg;
     struct iovec msgvec[3];
     int rc;
-
-    printf("[ARP] Sending ARP response to MIP %d: I am MIP %d\n", 
-           requester_mip, ifs->local_mip_addr);
 
     /* ARP SDU format: [ARP_TYPE][MIP_ADDRESS] */
     arp_sdu[0] = ARP_TYPE_RESP;      /* This is a RESPONSE */
@@ -143,16 +173,35 @@ int send_arp_response(struct ifs_data *ifs, int if_index, uint8_t requester_mip,
         return -1;
     }
 
-    printf("[ARP] Sent ARP response (%d bytes) to ", rc);
-    print_mac_addr(requester_mac, 6);
-    printf("\n");
-
     /* Free the allocated message struct */
     free(msg);
 
     return rc;
 }
 
+/**
+ * Handle received ARP packet (request or response)
+ * ifs: Interface data (ARP cache will be updated)
+ * sdu: Pointer to ARP packet payload
+ * sdu_len: Length of ARP packet in bytes
+ * src_mip: Source MIP address from MIP header
+ * src_mac: Source MAC address from Ethernet frame
+ * if_index: Interface on which packet was received
+ * 
+ * Processing logic:
+ * 1. Learn source MAC-to-MIP mapping from any ARP packet
+ * 2. If ARP REQUEST for us: send ARP RESPONSE
+ * 3. If ARP RESPONSE: update cache and trigger pending packets
+ * 
+ * When ARP is resolved, this function:
+ * - Sends route requests for pending forwards (to get next hop)
+ * - Directly sends pending pings that were waiting for this ARP entry
+ * 
+ * Global variables: ifs->arp (ARP cache modified)
+ *                   ifs->pending_forwards, ifs->pending_pings (processed)
+ * Returns: 0 on success, -1 on error
+ * Error conditions: Invalid ARP packet format
+ */
 int handle_arp_packet(struct ifs_data *ifs, const uint8_t *sdu, 
                       size_t sdu_len, uint8_t src_mip, 
                       const uint8_t *src_mac, int if_index) {
@@ -164,20 +213,10 @@ int handle_arp_packet(struct ifs_data *ifs, const uint8_t *sdu,
     uint8_t arp_type = sdu[0];      /* Request or Response */
     uint8_t mip_addr = sdu[1];      /* The MIP address in question */
     
-    printf("[ARP] Received packet: type=0x%02x, mip_addr=%d, from MIP %d (MAC ", 
-           arp_type, mip_addr, src_mip);
-    print_mac_addr((uint8_t*)src_mac, 6);
-    printf(") on interface %d\n", if_index);
-    
     if (arp_type == ARP_TYPE_REQ) {
         /* ARP Request: "Who has mip_addr?" */
-        printf("[ARP] ARP REQUEST: Who has MIP %d? (asked by MIP %d)\n", 
-               mip_addr, src_mip);
-        
         if (mip_addr == ifs->local_mip_addr) {
             /* Request is for us - send response */
-            printf("[ARP] Request is for us! Sending response back\n");
-            
             uint8_t target_mip = src_mip;
             const uint8_t *target_mac = src_mac; 
             int found = 0;
@@ -189,7 +228,6 @@ int handle_arp_packet(struct ifs_data *ifs, const uint8_t *sdu,
                     memcpy(ifs->arp.entries[i].mac_addr, target_mac, 6);
                     ifs->arp.entries[i].if_index = if_index;
                     found = 1;
-                    printf("[ARP] Cache UPDATED for MIP %d on IF %d\n", target_mip, if_index);
                     break;
                 }
             }
@@ -199,37 +237,25 @@ int handle_arp_packet(struct ifs_data *ifs, const uint8_t *sdu,
                 entry->mip_addr = target_mip;
                 entry->if_index = if_index;
                 memcpy(entry->mac_addr, target_mac, 6);
-                printf("[ARP] Cache ADDED: MIP %d on IF %d (total: %d)\n", 
-                       target_mip, if_index, ifs->arp.entry_count);
-            } else if (!found) {
-                printf("[ARP] WARNING: ARP cache full, cannot add entry for MIP %d\n", target_mip);
             }
 
             /* Copy MAC address to avoid const issues */
             uint8_t requester_mac[6];
             memcpy(requester_mac, src_mac, 6);
             return send_arp_response(ifs, if_index, src_mip, requester_mac);
-        } else {
-            printf("[ARP] Request not for us (we are MIP %d), ignoring\n", 
-                   ifs->local_mip_addr);
         }
     } else if (arp_type == ARP_TYPE_RESP) {
         /* ARP Response: "I (mip_addr) am at this MAC address" */
-        printf("[ARP] ARP RESPONSE: MIP %d is at MAC ", mip_addr);
-        print_mac_addr((uint8_t*)src_mac, 6);
-        printf(" on interface %d\n", if_index);
-        
         if (mip_addr == src_mip) {
             /* Add to/update ARP cache */
             int found = 0;
             for (int i = 0; i < ifs->arp.entry_count; i++) {
                 if (ifs->arp.entries[i].mip_addr == mip_addr) {
                     /* Update existing entry */
-                    memcpy(ifs->arp.entries[i].mac_addr, src_mac, 6);
-                    ifs->arp.entries[i].if_index = if_index;
-                    found = 1;
-                    printf("[ARP] Updated existing cache entry for MIP %d\n", mip_addr);
-                    break;
+                memcpy(ifs->arp.entries[i].mac_addr, src_mac, 6);
+                ifs->arp.entries[i].if_index = if_index;
+                found = 1;
+                break;
                 }
             }
             
@@ -238,47 +264,27 @@ int handle_arp_packet(struct ifs_data *ifs, const uint8_t *sdu,
                 entry->mip_addr = mip_addr;
                 entry->if_index = if_index;
                 memcpy(entry->mac_addr, src_mac, 6);
-                printf("[ARP] Added new cache entry: MIP %d -> MAC ", mip_addr);
-                print_mac_addr(entry->mac_addr, 6);
-                printf(" on interface %d (total: %d)\n", if_index, ifs->arp.entry_count);
-            } else if (!found) {
-                printf("[ARP] WARNING: ARP cache full, cannot add entry for MIP %d\n", 
-                       mip_addr);
+                printf("[ARP] Learned MIP %d -> MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
+                       mip_addr, src_mac[0], src_mac[1], src_mac[2],
+                       src_mac[3], src_mac[4], src_mac[5]);
             }
 
-            /* Immediately flush any pending messages that were waiting on this ARP.
-               We send them *now* using the interface the ARP RESP arrived on (per spec step 6). */
-            printf("[ARP] Checking for pending pings waiting for MIP %d\n", mip_addr);
-            
-            // Also need to trigger pending forwards that were waiting for this ARP
-            // Retry forwarding for any pending forwards that might use this new ARP entry
-            printf("[ARP] Checking for pending forwards that might use ARP for MIP %d\n", mip_addr);
+            // Flush pending messages and forwards waiting for this ARP 
             for (int fwd_idx = 0; fwd_idx < ifs->pending_forward_count; fwd_idx++) {
                 struct pending_forward *pf = &ifs->pending_forwards[fwd_idx];
                 if (!pf->active) continue;
-                
-                printf("[ARP] Found pending forward: dest=%d src=%d, retrying with new ARP entry...\n",
-                       pf->dest_mip, pf->src_mip);
-                
-                // Send a dummy route request to trigger route lookup again
-                // This will cause handle_route_response to be called, which will retry the forward
+                // Send route request to trigger forward retry
                 send_route_request(ifs, pf->dest_mip);
             }
             
             for (int i = 0; i < ifs->pending_ping_count; i++) {
                 struct pending_ping *pending = &ifs->pending_pings[i];
 
-                /* Only flush entries that actually waited for ARP for this dest. */
                 if (pending->waiting_for_arp && pending->dest_mip == mip_addr) {
-                    printf("[ARP] Found pending ping for MIP %d (fd=%d), sending now!\n", 
-                           mip_addr, pending->client_fd);
                     pending->waiting_for_arp = 0;
 
-                    /* No manual padding here. Let send_mip_packet() do padding.
-                       This avoids double-padding and keeps wire-format single-sourced. */
                     int rc = send_mip_packet(ifs, if_index, mip_addr, 
                                              SDU_TYPE_PING, pending->sdu, pending->sdu_len, pending->ttl, 0);
-                    printf("[ARP] send_mip_packet (flush pending) rc=%d\n", rc);
                     
                     if (rc >= 0) {
                         if (pending->client_fd < 0) {
@@ -286,7 +292,6 @@ int handle_arp_packet(struct ifs_data *ifs, const uint8_t *sdu,
                                 ifs->pending_ping_count--;
                             i--;
                         } else {
-                            printf("[ARP] Successfully sent pending ping to MIP %d\n", mip_addr);
                             pending->waiting_for_arp = 0;
                         }
                     } else {
@@ -295,9 +300,6 @@ int handle_arp_packet(struct ifs_data *ifs, const uint8_t *sdu,
                     }
                 }
             }
-        } else {
-            printf("[ARP] WARNING: ARP response mismatch - mip_addr=%d but src_mip=%d\n",
-                   mip_addr, src_mip);
         }
     } else {
         fprintf(stderr, "[ARP] Unknown ARP type: 0x%02x\n", arp_type);
@@ -308,18 +310,28 @@ int handle_arp_packet(struct ifs_data *ifs, const uint8_t *sdu,
 }
 
 /* Lookup MAC from ARP cache */
+/**
+ * Look up MIP address in ARP cache
+ * entries: Array of ARP cache entries
+ * count: Number of entries in cache
+ * mip: MIP address to look up
+ * mac: Output buffer for MAC address (6 bytes) - must be allocated by caller
+ * if_index: Output pointer for interface index
+ * 
+ * Searches ARP cache linearly for the specified MIP address.
+ * If found, copies MAC address to output buffer and sets interface index.
+ * 
+ * Global variables: None (operates on provided array)
+ * Returns: 0 if found, -1 if not found
+ */
 int arp_cache_lookup(struct arp_entry *entries, int count,  
-                uint8_t mip, uint8_t mac[6], int *if_index) {
+                     uint8_t mip, uint8_t mac[6], int *if_index) {
     for (int i = 0; i < count; i++) {
         if (entries[i].mip_addr == mip) {
             memcpy(mac, entries[i].mac_addr, 6);
             *if_index = entries[i].if_index;
-            printf("[ARP] Cache HIT for MIP %d: MAC ", mip);
-            print_mac_addr(entries[i].mac_addr, 6);
-            printf(" on interface %d\n", *if_index);
             return 0;
         }
     }
-    printf("[ARP] Cache MISS for MIP %d\n", mip);
     return -1; // Not found
 }

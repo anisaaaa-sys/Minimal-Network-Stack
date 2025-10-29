@@ -1,4 +1,29 @@
-#define _DEFAULT_SOURCE
+/**
+ * mipd.c - MIP Daemon Main Program
+ * 
+ * The MIP (Minimal Internet Protocol) daemon is the core network layer component
+ * that handles packet forwarding, ARP resolution, and communication between
+ * upper layer applications and the routing daemon.
+ * 
+ * Usage: mipd [-d] <socket_upper> <MIP address>
+ * 
+ * Architecture:
+ * - Uses epoll for non-blocking I/O multiplexing
+ * - Manages multiple RAW sockets (one per network interface)
+ * - Accepts connections from upper layer applications via UNIX socket
+ * - Communicates with routing daemon for route lookups
+ * - Implements automatic ARP learning and resolution
+ * - Forwards packets based on routing table information
+ * 
+ * Main loop handles:
+ * 1. RAW socket events (incoming MIP packets from network)
+ * 2. UNIX socket events (new application connections)
+ * 3. Application events (PING requests, PONG responses)
+ * 4. Routing daemon events (route responses, routing protocol messages)
+ * 
+ * Returns: 0 on clean exit, 1 on error
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,9 +32,22 @@
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/select.h>
+#include <sys/time.h>
 
 #include "mipd.h"
 
+/**
+ * Main function for MIP daemon
+ * 
+ * Initializes network interfaces, creates RAW sockets, sets up UNIX socket
+ * for upper layer connections, creates epoll instance, and enters main event
+ * loop to handle all I/O events non-blockingly.
+ * 
+ * Global variables: None
+ * Returns: 0 on success, 1 on error
+ * Error conditions: Invalid arguments, initialization failures, I/O errors
+ */
 int main(int argc, char *argv[]) {
     if (argc < 3) {
         fprintf(stderr, "Usage: %s [-d] <socket_upper> <MIP address>\n", argv[0]);
@@ -69,7 +107,6 @@ int main(int argc, char *argv[]) {
             perror("epoll_ctl RAW socket");
             exit(EXIT_FAILURE);
         }
-        printf("Added RAW socket fd %d to epoll (if %d)\n", local_if.rsock[i], i);
     }
 
     /* Add UNIX listen socket to epoll */
@@ -79,23 +116,17 @@ int main(int argc, char *argv[]) {
         perror("epoll_ctl UNIX socket");
         exit(EXIT_FAILURE);
     }
-    printf("Added UNIX socket fd %d to epoll\n", unix_sock);
-
-    printf("MIP daemon started at MIP addr %d, unix socket %s\n", mip_addr, unix_path);
+    printf("\n========================================\n");
+    printf("[MIPD] Started for MIP %d\n", mip_addr);
+    printf("========================================\n");
 
     while (1) {
-        if (debug) {
-            printf("[MIPD] Waiting for events...\n");
-            fflush(stdout);
-        }
-
         int n = epoll_wait(epollfd, events, MAX_EVENTS, -1);
         if (n < 0) {
             if (errno == EINTR) continue;
             perror("epoll_wait");
             break;
         }
-        if (debug) printf("[MIPD] Got %d events\n", n);
 
         /* Categorize events for deterministic handling order */
         int idx_accept[MAX_EVENTS], n_accept = 0;
@@ -124,15 +155,11 @@ int main(int argc, char *argv[]) {
         for (int k = 0; k < n_accept; k++) {
             int i = idx_accept[k];
             (void)i; // events[i] not needed further here
-            if (debug) printf("[MIPD] UNIX socket event - accepting connection\n");
             int client_fd = accept(unix_sock, NULL, NULL);
             if (client_fd < 0) {
                 perror("accept");
                 continue;
             }
-            printf("\n========== NEW CONNECTION fd=%d ==========\n", client_fd);
-            fflush(stdout);
-            if (debug) printf("[MIPD] New upper-layer connection: fd=%d\n", client_fd);
 
             // Check if this is an upper layer identification
             // Use select to wait for data with timeout
@@ -149,21 +176,6 @@ int main(int argc, char *argv[]) {
                 peek = recv(client_fd, peekbuf, sizeof(peekbuf), MSG_PEEK);
             }
             
-            printf("[MIPD] Peeked %zd bytes from fd=%d (select returned %d)\n", peek, client_fd, sel);
-            if (peek < 0) {
-                printf("[MIPD] Peek error: %s\n", strerror(errno));
-            } else if (peek > 0) {
-                printf("[MIPD] First byte: 0x%02x (%d decimal)\n", 
-                       (unsigned char)peekbuf[0], (unsigned char)peekbuf[0]);
-                if (peek >= 2) {
-                    printf("[MIPD] First 2 bytes: 0x%02x 0x%02x\n", 
-                           (unsigned char)peekbuf[0], (unsigned char)peekbuf[1]);
-                }
-            } else {
-                printf("[MIPD] No data peeked (select=%d, peek=%zd)\n", sel, peek);
-            }
-            fflush(stdout);
-            
             if (peek == 1) {
                 // Single byte = SDU type identification (but only if it's a valid SDU type)
                 uint8_t first_byte = (uint8_t)peekbuf[0];
@@ -174,37 +186,17 @@ int main(int argc, char *argv[]) {
                     uint8_t sdu_type;
                     recv(client_fd, &sdu_type, 1, 0);
 
-                    printf("[MIPD] Upper layer identified: SDU type 0x%02x\n", sdu_type);
-
                     if (sdu_type == SDU_TYPE_ROUTING) {
                         // This is the routing daemon
-                        printf("\n");
-                        printf("=====================================================\n");
-                        printf("[MIPD] ***** ROUTING DAEMON IDENTIFICATION *****\n");
-                        printf("[MIPD] SDU type 0x%02x == SDU_TYPE_ROUTING (0x%02x)\n", 
-                               sdu_type, SDU_TYPE_ROUTING);
-                        printf("[MIPD] OLD routing_daemon_fd = %d\n", local_if.routing_daemon_fd);
-                        printf("[MIPD] NEW routing_daemon_fd = %d (client_fd)\n", client_fd);
-                        
-                        if (local_if.routing_daemon_fd >= 0 && local_if.routing_daemon_fd != client_fd) {
-                            printf("[MIPD] WARNING: Overwriting existing routing daemon fd=%d with fd=%d!\n",
-                                   local_if.routing_daemon_fd, client_fd);
-                        }
-                        
                         local_if.routing_daemon_fd = client_fd;
-                        printf("[MIPD] Routing daemon connected (fd=%d) for MIP %d\n", 
-                               client_fd, local_if.local_mip_addr);
-                        printf("[MIPD] ***** END ROUTING DAEMON SETUP *****\n");
-                        printf("=====================================================\n");
-                        printf("\n");
+                        printf("\n[MIPD] Routing daemon connected for MIP %d\n", 
+                               local_if.local_mip_addr);
 
                         // Send local MIP address to routing daemon
                         uint8_t mip_info[2];
                         mip_info[0] = local_if.local_mip_addr;
                         mip_info[1] = 0;
-                        ssize_t sent = send(client_fd, mip_info, 2, 0);
-                        printf("[MIPD] Sent MIP info to routing daemon: mip=%d (sent=%zd bytes)\n", 
-                               local_if.local_mip_addr, sent);
+                        send(client_fd, mip_info, 2, 0);
 
                         // Add to epoll
                         struct epoll_event rev = { .events = EPOLLIN, .data.fd = client_fd };
@@ -212,8 +204,6 @@ int main(int argc, char *argv[]) {
                             perror("epoll_ctl add routing_fd");
                             close(client_fd);
                             if (local_if.routing_daemon_fd == client_fd) local_if.routing_daemon_fd = -1;
-                        } else if (debug) {
-                            printf("[MIPD] Added routing daemon fd %d to epoll\n", client_fd);
                         }
                     } else {
                         // Other upper layer (store for later)
@@ -237,32 +227,25 @@ int main(int argc, char *argv[]) {
             
             if (peek >= 1) {
                 // Data waiting = client ping request (or peek==1 with invalid SDU type)
-                if (debug) {
-                    printf("[MIPD] fd=%d has %zd bytes waiting (client). First bytes: '%.*s'\n",
-                           client_fd, peek, (int)(peek > 40 ? 40 : peek), peekbuf);
-                }
+                printf("\n[MIPD] PING client connected for MIP %d\n", local_if.local_mip_addr);
+                
                 struct epoll_event cev = { .events = EPOLLIN, .data.fd = client_fd };
                 if (epoll_ctl(epollfd, EPOLL_CTL_ADD, client_fd, &cev) < 0) {
                     perror("epoll_ctl add client_fd");
                     close(client_fd);
                     continue;
-                } else if (debug) {
-                    printf("[MIPD] Added client fd %d to epoll\n", client_fd);
                 }
-                if (debug) printf("[MIPD] Immediately handling client_fd=%d after accept (client)\n", client_fd);
+                
                 int rc = handle_unix_connection(&local_if, client_fd, debug);
                 if (rc < 0) {
-                    if (debug) printf("[MIPD] Client fd %d failed processing after accept (rc=%d). Removing.\n", client_fd, rc);
                     epoll_ctl(epollfd, EPOLL_CTL_DEL, client_fd, NULL);
                     close(client_fd);
-                } else {
-                    if (debug) printf("[MIPD] Client fd %d processed after accept (rc=%d). Keeping open for PONG.\n", client_fd, rc);
                 }
             } else {
                 // No data = server connection
+                printf("\n[MIPD] PING server connected for MIP %d\n", local_if.local_mip_addr);
                 if (local_if.server_fd < 0) {
                     local_if.server_fd = client_fd;
-                    if (debug) printf("[MIPD] Storing fd %d as persistent server connection\n", client_fd);
                 }
                 struct epoll_event sev = { .events = EPOLLIN, .data.fd = client_fd };
                 if (epoll_ctl(epollfd, EPOLL_CTL_ADD, client_fd, &sev) < 0) {
@@ -279,7 +262,6 @@ int main(int argc, char *argv[]) {
         for (int k = 0; k < n_routing; k++) {
             int i = idx_routing[k];
             int fd = events[i].data.fd;
-            if (debug) printf("[MIPD] Routing daemon event on fd=%d\n", fd);
 
             // Read ALL available messages from routing daemon (may be multiple)
             while (1) {
@@ -300,11 +282,6 @@ int main(int argc, char *argv[]) {
                     // EAGAIN/EWOULDBLOCK = no more messages, break out of while loop
                     break;
                 }
-                printf("[MIPD] Received %zd bytes from routing daemon (fd=%d): ", m, fd);
-                for (ssize_t j = 0; j < m && j < 10; j++) {
-                    printf("0x%02x ", buffer[j]);
-                }
-                printf("\n");
                 
                 // Message format: [dest_mip][ttl][payload...]
                 if (m < 3) {
@@ -317,33 +294,16 @@ int main(int argc, char *argv[]) {
                 uint8_t *payload = buffer + 2;
                 size_t payload_len = m - 2;
 
-                printf("[MIPD] Parsing routing daemon message: dest=%d, ttl=%d, payload_len=%zu\n",
-                       dest, ttl, payload_len);
-                if (payload_len >= 1) {
-                    printf("[MIPD] Payload[0]=0x%02x", payload[0]);
-                    if (payload_len >= 2) printf(" Payload[1]=0x%02x", payload[1]);
-                    if (payload_len >= 3) printf(" Payload[2]=0x%02x", payload[2]);
-                    if (payload_len >= 4) printf(" Payload[3]=0x%02x", payload[3]);
-                    printf("\n");
-                }
-
-                // Check if it is a route response
-                printf("[MIPD] Checking if route response: payload_len=%zu (need >=4), ", payload_len);
-                printf("payload[0]=0x%02x (need 0x52), payload[1]=0x%02x (need 0x53), payload[2]=0x%02x (need 0x50)\n",
-                       payload_len >= 1 ? payload[0] : 0,
-                       payload_len >= 2 ? payload[1] : 0,
-                       payload_len >= 3 ? payload[2] : 0);
-                
+                // Check if it is a route response (RSP)
                 if (payload_len >= 4 && payload[0] == 0x52 &&
                     payload[1] == 0x53 && payload[2] == 0x50) {
-                        // Route response - handle it
-                        printf("[MIPD] *** RECEIVED ROUTE RESPONSE FROM ROUTING DAEMON ***\n");
-                        printf("[MIPD] Calling handle_route_response with payload_len=%zu\n", payload_len);
+                        // Route response - handle it internally
                         handle_route_response(&local_if, payload, payload_len);
-                        printf("[MIPD] *** ROUTE RESPONSE HANDLED ***\n");
                 } else {
-                    // Regular routing protocol message - send it
-                    if (debug) printf("[MPID] Routing daemon sending to MIP %d\n", dest);
+                    // Routing protocol message (HELLO/UPDATE) - forward to network
+                    const char *msg_type = (payload_len > 0 && payload[0] == 0x01) ? "HELLO" : 
+                                           (payload_len > 0 && payload[0] == 0x02) ? "UPDATE" : "ROUTING";
+                    printf("\n[MIPD] Forwarding %s from routing daemon to MIP %d\n", msg_type, dest);
                     send_mip_packet(&local_if, 0, dest, SDU_TYPE_ROUTING, 
                                     payload, payload_len, ttl, 0);
                 }
@@ -354,14 +314,10 @@ int main(int argc, char *argv[]) {
         for (int k = 0; k < n_client; k++) {
             int i = idx_client[k];
             int fd = events[i].data.fd;
-            if (debug) printf("[MIPD] Handling short-lived client fd=%d\n", fd);
             int rc = handle_unix_connection(&local_if, fd, debug);
             if (rc < 0) {
-                if (debug) printf("[MIPD] Client fd %d failed processing (rc=%d). Removing from epoll.\n", fd, rc);
                 epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, NULL);
                 close(fd);
-            } else {
-                if (debug) printf("[MIPD] Client fd %d PING sent/deferred (rc=%d). Keeping socket open for PONG.\n", fd, rc);
             }
         }
 
@@ -369,7 +325,6 @@ int main(int argc, char *argv[]) {
         for (int k = 0; k < n_server; k++) {
             int i = idx_server[k];
             int fd = events[i].data.fd;
-            if (debug) printf("[MIPD] server_fd event on fd=%d\n", fd);
 
             uint8_t buffer[MAX_SDU_SIZE];
             ssize_t m = recv(fd, buffer, sizeof(buffer), 0);
@@ -381,7 +336,6 @@ int main(int argc, char *argv[]) {
                 if (local_if.server_fd == fd) local_if.server_fd = -1;
             } else {
                 if (m < 3) {
-                    if (debug) printf("[MIPD] Server sent too short message (%zd bytes)\n", m);
                     continue;
                 }
                 uint8_t dest = buffer[0];
@@ -389,9 +343,9 @@ int main(int argc, char *argv[]) {
                 uint8_t *sdu = buffer + 2;
                 size_t sdu_len = (size_t)m - 2;
 
-                printf("[MIPD] Server (fd=%d) sending PONG: %zd bytes to MIP %u, TTL %u\n",
-                       fd, m, dest, ttl);
-                printf("[MIPD] PONG payload: '%.*s'\n", (int)sdu_len, sdu);
+                printf("\n[MIPD] Server sending PONG: MIP %d -> %d (TTL=%d)\n",
+                       local_if.local_mip_addr, dest, (ttl == 0) ? DEFAULT_TTL : ttl);
+                printf("[MIPD] Payload: \"%.*s\"\n", (int)sdu_len, sdu);
 
                 // Check if destination is local
                 if (dest == local_if.local_mip_addr) {
@@ -435,7 +389,6 @@ int main(int argc, char *argv[]) {
                 if (fd == local_if.rsock[j]) { if_index = j; break; }
             }
             if (if_index < 0) continue;
-            if (debug) printf("[MIPD] RAW socket event on interface %d (fd=%d)\n", if_index, fd);
 
             uint8_t buf[MAX_SDU_SIZE];
             struct sockaddr_ll addr;
@@ -445,10 +398,7 @@ int main(int argc, char *argv[]) {
                                  (struct sockaddr*)&addr, &addr_len);
             if (rc < 0) {
                 perror("recvfrom RAW socket");
-            } else if (rc == 0) {
-                if (debug) printf("recvfrom returned 0\n");
-            } else {
-                if (debug) printf("[MIPD] Received %zd bytes on RAW fd %d\n", rc, fd);
+            } else if (rc > 0) {
                 handle_mip_packet(&local_if, buf, (size_t)rc, if_index);
             }
         }

@@ -1,3 +1,20 @@
+/**
+ * routingd.c - Routing Daemon Main Program
+ * 
+ * Main loop for the routing daemon. Connects to MIP daemon via UNIX socket,
+ * periodically sends HELLO and UPDATE messages, processes routing protocol
+ * messages from neighbors, handles route requests from MIP daemon, and
+ * manages neighbor and route timeouts.
+ * 
+ * Usage: routingd [-d] <socket_to_mip_daemon>
+ * 
+ * The routing daemon implements Distance Vector Routing (DVR) with Poisoned
+ * Reverse to prevent routing loops. It maintains a routing table and neighbor
+ * list, exchanging routing information with other nodes in the network.
+ * 
+ * Returns: 0 on clean exit, 1 on error
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +29,21 @@
 #include "mipd.h"
 #include "routingd.h"
 
+/**
+ * Main function for routing daemon
+ * 
+ * Establishes connection with MIP daemon, initializes routing state,
+ * and enters main loop that:
+ * 1. Periodically sends HELLO broadcasts (every HELLO_INTERVAL seconds)
+ * 2. Periodically sends UPDATE messages to neighbors (every UPDATE_INTERVAL seconds)
+ * 3. Receives and processes routing messages from MIP daemon
+ * 4. Updates neighbor and route timeouts
+ * 5. Handles route requests from MIP daemon
+ * 
+ * Global variables: None
+ * Returns: 0 on success, 1 on error
+ * Error conditions: Invalid arguments, connection failure, socket errors
+ */
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         fprintf(stderr, "Usage: %s [-d] <socket_to_mip_daemon>\n", argv[0]);
@@ -64,9 +96,7 @@ int main(int argc, char *argv[]) {
 
     // Read local MIP address from daemon
     uint8_t mip_info[2];
-    printf("[ROUTING] Receiving MIP address from daemon...\n");
     ssize_t n = recv(sockfd, mip_info, 2, 0);
-    printf("[ROUTING] Received %zd bytes from daemon\n", n);
     if (n < 1) {
         fprintf(stderr, "[ROUTING] Failed to receive MIP address (received %zd bytes)\n", n);
         close(sockfd);
@@ -103,8 +133,6 @@ int main(int argc, char *argv[]) {
 
         // Periodic tasks
         if (now - state.last_hello_sent >= HELLO_INTERVAL) {
-            printf("[ROUTING] Time to send HELLO: now=%ld, last_hello_sent=%ld, interval=%d\n",
-                   now, state.last_hello_sent, HELLO_INTERVAL);
             send_hello(&state);
         }
 
@@ -140,7 +168,6 @@ int main(int argc, char *argv[]) {
                 break;
             }
 
-            printf("[ROUTING] Received %zd bytes from MIP daemon\n", nread);
 
             // Parse message: [src_mip][ttl][payload...]
             if (nread < 3) {
@@ -154,8 +181,6 @@ int main(int argc, char *argv[]) {
             uint8_t *payload = buffer + 2;
             size_t payload_len = nread - 2;
 
-            printf("[ROUTING] Parsed: src_mip=%d, ttl=%d, payload_len=%zu\n", 
-                   src_mip, ttl, payload_len);
 
             if (payload_len < 1) {
                 printf("[ROUTING] Payload too short (%zu bytes), ignoring\n", payload_len);
@@ -166,7 +191,6 @@ int main(int argc, char *argv[]) {
             
             // Only log non-HELLO/UPDATE messages to reduce spam
             if (msg_type != MSG_HELLO && msg_type != MSG_UPDATE) {
-                printf("[ROUTING] Message type: 0x%02x (payload_len=%zu)\n", msg_type, payload_len);
             }
 
             switch (msg_type) {
@@ -181,25 +205,18 @@ int main(int argc, char *argv[]) {
                     break;
                 
                 case 0x52: // 'R' - Route request
-                printf("[ROUTING] Got 'R' message, checking if it's a route request...\n");
-                printf("[ROUTING] payload_len=%zu, need >=4\n", payload_len);
-                if (payload_len >= 4) {
-                    printf("[ROUTING] payload[1]=0x%02x (need 0x45), payload[2]=0x%02x (need 0x51)\n",
-                           payload[1], payload[2]);
-                }
-                if (payload_len >= 4 && payload[1] == 0x45 && payload[2] == 0x51) {
-                    // REQ format: ['R']['E']['Q'][dest_mip]
-                    uint8_t dest_mip = payload[3];
-                    printf("[ROUTING] ***** ROUTE REQUEST for MIP %d *****\n", dest_mip);
-                    handle_route_request(&state, dest_mip);
-                } else {
-                    printf("[ROUTING] Not a valid route request\n");
-                }
-                break;
-            
-            default:
-                if (debug) printf("[ROUTING] Unknown message type: 0x%02x\n", msg_type);
-                break;
+                    if (payload_len >= 4 && payload[1] == 0x45 && payload[2] == 0x51) {
+                        // REQ format: ['R']['E']['Q'][dest_mip]
+                        uint8_t dest_mip = payload[3];
+                        handle_route_request(&state, dest_mip);
+                    } else {
+                        printf("[ROUTING] Not a valid route request\n");
+                    }
+                    break;
+
+                default:
+                    if (debug) printf("[ROUTING] Unknown message type: 0x%02x\n", msg_type);
+                    break;
             }
         } else if (ready < 0 && errno != EINTR) {
             perror("select");

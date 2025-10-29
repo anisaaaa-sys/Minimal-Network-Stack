@@ -1,3 +1,10 @@
+/**
+ * mip_utils.c - MIP Daemon Utility Functions
+ * 
+ * Contains helper functions for interface initialization, MAC address
+ * printing, and RAW socket creation.
+ */
+
 #include <ifaddrs.h>   /* getifaddrs, freeifaddrs */
 #include <string.h>    /* strcmp, memcpy */
 #include <stdlib.h>    /* exit */
@@ -7,12 +14,20 @@
 #include <arpa/inet.h> /* htons */
 #include <sys/socket.h> /* socket */
 #include <linux/if_packet.h> /* struct sockaddr_ll */
-#include <sys/ioctl.h>   // ioctl
+#include <sys/ioctl.h>   /* ioctl */
 
 #include "mipd.h" 
 
-/*
- * Print MAC address in hex format
+/**
+ * Print MAC address in human-readable hexadecimal format
+ * mac: Pointer to MAC address bytes
+ * len: Number of bytes to print (typically 6 for Ethernet)
+ * 
+ * Prints MAC address as colon-separated hex values to stdout.
+ * Example output: "00:11:22:33:44:55"
+ * 
+ * Global variables: None
+ * Returns: Nothing
  */
 void print_mac_addr(const uint8_t *mac, size_t len) {
     for (size_t i = 0; i < len; i++) {
@@ -20,8 +35,23 @@ void print_mac_addr(const uint8_t *mac, size_t len) {
     }
 }
 
-/*
- * Initialize interfaces: store MAC addresses and create RAW sockets
+/**
+ * Initialize interface data structures and create RAW sockets
+ * ifs: Pointer to interface data structure to initialize
+ * mip_addr: MIP address to assign to this node
+ * 
+ * This function:
+ * 1. Scans all available network interfaces using getifaddrs()
+ * 2. Skips loopback interface
+ * 3. Extracts MAC addresses for each interface
+ * 4. Creates AF_PACKET RAW sockets for MIP protocol (ETH_P_MIP)
+ * 5. Binds each socket to its corresponding interface
+ * 6. Stores interface information in ifs_data structure
+ * 
+ * Global variables: None (all state stored in ifs parameter)
+ * Returns: Nothing
+ * Error handling: Exits program on fatal errors (no interfaces found,
+ *                 socket creation failure, bind failure)
  */
 void init_ifs(struct ifs_data *ifs, int mip_addr) {
     struct ifaddrs *ifaces, *ifa;
@@ -49,7 +79,7 @@ void init_ifs(struct ifs_data *ifs, int mip_addr) {
         ifs->addr[idx].sll_halen = 6;
         memcpy(ifs->addr[idx].sll_addr, sll->sll_addr, 6);
 
-        printf("Found interface %s, ifindex %d, MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
+        printf("[MIPD] Found interface %s, ifindex %d, MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
             ifa->ifa_name, sll->sll_ifindex,
             sll->sll_addr[0], sll->sll_addr[1], sll->sll_addr[2],
             sll->sll_addr[3], sll->sll_addr[4], sll->sll_addr[5]);
@@ -83,6 +113,6 @@ void init_ifs(struct ifs_data *ifs, int mip_addr) {
 
     // DEBUG: print interface info
     for (int i = 0; i < ifs->ifn; i++) {
-        printf("Interface %d has RAW socket fd %d\n", i, ifs->rsock[i]);
+        printf("[MIPD] Interface %d has RAW socket fd %d\n", i, ifs->rsock[i]);
     }
 }

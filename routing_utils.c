@@ -1,3 +1,18 @@
+/**
+ * routing_utils.c - Distance Vector Routing Protocol Implementation
+ * 
+ * Implements the Distance Vector Routing (DVR) protocol with Poisoned Reverse
+ * for loop prevention. Handles neighbor discovery via HELLO messages, routing
+ * table updates, route timeouts, and responds to route queries from the MIP daemon.
+ * 
+ * Key features:
+ * - HELLO broadcasts for neighbor discovery
+ * - Periodic UPDATE messages with routing table exchange
+ * - Poisoned Reverse: advertise infinity metric for routes back to next hop
+ * - Route timeouts and neighbor timeouts
+ * - Route request/response handling for MIP daemon
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +26,17 @@
 #include "mipd.h"
 #include "routingd.h"
 
+/**
+ * Initialize routing state structure
+ * state: Pointer to routing state structure to initialize
+ * local_mip: This node's MIP address
+ * 
+ * Initializes all fields to default values and creates a route to self
+ * with metric 0 (local route).
+ * 
+ * Global variables: None (all state encapsulated in parameter)
+ * Returns: Nothing
+ */
 void init_routing_state(struct routing_state *state, uint8_t local_mip) {
     memset(state, 0, sizeof(*state));
     state->local_mip = local_mip;
@@ -25,9 +51,6 @@ void init_routing_state(struct routing_state *state, uint8_t local_mip) {
 }
 
 void send_hello(struct routing_state *state) {
-    printf("[ROUTING] send_hello called for MIP %d, mip_sock=%d\n", 
-           state->local_mip, state->mip_sock);
-    
     if (state->mip_sock < 0) {
         printf("[ROUTING] ERROR: mip_sock is invalid (%d), cannot send HELLO\n", 
                state->mip_sock);
@@ -41,15 +64,11 @@ void send_hello(struct routing_state *state) {
     buffer[2] = MSG_HELLO;
     buffer[3] = state->local_mip;
 
-    printf("[ROUTING] Sending HELLO: dest=255, ttl=0, msg_type=0x%02x, local_mip=%d\n",
-           MSG_HELLO, state->local_mip);
-
     ssize_t sent = send(state->mip_sock, buffer, 4, 0);
     if (sent < 0) {
         perror("send_hello");
     } else {
-        printf("[ROUTING] Sent HELLO broadcast from MIP %d (%zd bytes)\n", 
-               state->local_mip, sent);
+        printf("\n[ROUTING] MIP %d sending HELLO broadcast\n", state->local_mip);
     }
 
     state->last_hello_sent = time(NULL);
@@ -88,11 +107,6 @@ void send_update(struct routing_state *state) {
             // advertise infinite metric to prevent loops
             if (state->routes[j].next_hop == neighbor_mip) {
                 metric = INFINITY_METRIC;
-                printf("[ROUTING]   Poison: dest %d, metric INFINITY (next_hop=%d)\n", 
-                       dest, neighbor_mip);
-            } else {
-                printf("[ROUTING]   Advertise: dest %d, metric %d (via %d)\n",
-                       dest, metric, state->routes[j].next_hop);
             }
 
             buffer[offset++] = dest;
@@ -106,8 +120,8 @@ void send_update(struct routing_state *state) {
         if (sent < 0) {
             perror("send_update");
         } else {
-            printf("[ROUTING] Sent UPDATE to MIP %d with %d routes\n",
-                   neighbor_mip, num_routes);
+            printf("[ROUTING] MIP %d sending UPDATE to MIP %d (%d routes)\n", 
+                   state->local_mip, neighbor_mip, num_routes);
         }
     }
 
@@ -117,7 +131,7 @@ void send_update(struct routing_state *state) {
 void handle_hello(struct routing_state *state, uint8_t from_mip) {
     if (from_mip == state->local_mip) return;  // Ignore our own HELLOs
 
-    printf("[ROUTING] Received HELLO from MIP %d\n", from_mip);
+    printf("[ROUTING] MIP %d received HELLO from MIP %d\n", state->local_mip, from_mip);
 
     // Update or add neighbor
     int found = 0;
@@ -135,7 +149,6 @@ void handle_hello(struct routing_state *state, uint8_t from_mip) {
         state->neighbors[state->neighbor_count].last_hello = time(NULL);
         state->neighbors[state->neighbor_count].valid = 1;
         state->neighbor_count++;
-        printf("[ROUTING] Added new neighbor: MIP %d\n", from_mip);
     }
     
     // Always add/update direct route to neighbor (metric 1)
@@ -148,8 +161,8 @@ void handle_update(struct routing_state *state, uint8_t from_mip,
     if (len < 1) return;
 
     uint8_t num_routes = data[0];
-    printf("[ROUTING] Received UPDATE from MIP %d with %d routes\n",
-           from_mip, num_routes);
+    printf("[ROUTING] MIP %d received UPDATE from MIP %d (%d routes)\n",
+           state->local_mip, from_mip, num_routes);
 
     int offset = 1;
     for (int i = 0; i < num_routes && offset + 1 < (int)len; i++) {
@@ -181,8 +194,6 @@ void handle_update(struct routing_state *state, uint8_t from_mip,
                     // Refresh route (even if metric is same or worse from same next hop)
                     existing->metric = new_metric;
                     existing->last_update = time(NULL);
-                    printf("[ROUTING] Refreshed route to MIP %d via %d (metric %d)\n",
-                            dest, from_mip, new_metric);
                 } else {
                     // Route became unreachable
                     existing->valid = 0;
@@ -198,17 +209,12 @@ void handle_update(struct routing_state *state, uint8_t from_mip,
             // New route
             if (new_metric < INFINITY_METRIC) {
                 add_or_update_route(state, dest, from_mip, new_metric);
-                printf("[ROUTING] Added route to MIP %d via %d (metric %d)\n",
-                        dest, from_mip, new_metric);
             }
         }
     }
 }
 
 void handle_route_request(struct routing_state *state, uint8_t dest_mip) {
-    printf("[ROUTING] ========== HANDLE_ROUTE_REQUEST START ==========\n");
-    printf("[ROUTING] Route lookup request for MIP %d\n", dest_mip);
-    printf("[ROUTING] mip_sock fd=%d\n", state->mip_sock);
 
     struct route_entry *route = lookup_route(state, dest_mip);
 
@@ -222,28 +228,14 @@ void handle_route_request(struct routing_state *state, uint8_t dest_mip) {
 
     if (route && route->valid) {
         buffer[5] = route->next_hop;
-        printf("[ROUTING] ***** FOUND ROUTE: MIP %d -> next_hop %d (metric %d) *****\n", 
-               dest_mip, route->next_hop, route->metric);
     } else {
         buffer[5] = 255;    // No route found
-        printf("[ROUTING] ***** NO ROUTE to MIP %d *****\n", dest_mip);
     }
-
-    printf("[ROUTING] Sending RESPONSE: ['R']['S']['P'][next_hop=%d]\n", buffer[5]);
-    printf("[ROUTING] Response buffer: 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x\n",
-           buffer[0], buffer[1], buffer[2], buffer[3], buffer[4], buffer[5]);
     
     ssize_t sent = send(state->mip_sock, buffer, 6, 0);
     if (sent < 0) {
         perror("handle_route_request: send");
-        printf("[ROUTING] ERROR: send failed with errno=%d\n", errno);
-    } else if (sent != 6) {
-        printf("[ROUTING] WARNING: Only sent %zd bytes (expected 6)!\n", sent);
-    } else {
-        printf("[ROUTING] Route response sent successfully (%zd bytes)\n", sent);
     }
-    printf("[ROUTING] ========== HANDLE_ROUTE_REQUEST END ==========\n");
-    fflush(stdout);
 }
 
 void update_neighbors(struct routing_state *state) {
@@ -341,7 +333,7 @@ void add_or_update_route(struct routing_state *state, uint8_t dest,
 }
 
 void print_routing_table(struct routing_state *state) {
-    printf("\n=== Routing Table (MIP %d) ===\n", state->local_mip);
+    printf("\n====== Routing Table (MIP %d) ======\n", state->local_mip);
     printf("Dest\tNext Hop\tMetric\tAge\n");
 
     time_t now = time(NULL);
@@ -360,5 +352,5 @@ void print_routing_table(struct routing_state *state) {
     if (valid_count == 0) {
         printf("No routes\n");
     }
-    printf("==============================\n\n");
+    printf("=====================================\n\n");
 }

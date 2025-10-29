@@ -1,3 +1,11 @@
+/**
+ * mip_unix.c - UNIX Domain Socket Interface for Upper Layer Communication
+ * 
+ * Implements communication between the MIP daemon and upper layer applications
+ * (ping client/server, routing daemon) using UNIX domain sockets (SOCK_SEQPACKET).
+ * Handles connection setup, message passing, and application protocol.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,7 +19,19 @@
 
 #include "mipd.h" 
 
-/* Initialize a UNIX domain socket to communicate with upper layer */
+/**
+ * Initialize a UNIX domain socket to communicate with upper layer applications
+ * path: Path to UNIX socket file (will be created)
+ * 
+ * Creates, binds, and listens on a UNIX SOCK_SEQPACKET socket.
+ * The socket will be used to accept connections from ping clients/servers
+ * and the routing daemon.
+ * 
+ * Global variables: None
+ * Returns: Socket file descriptor on success, -1 on error
+ * Error conditions: Socket creation failure, bind failure (path exists),
+ *                   listen failure
+ */
 int init_unix_socket(const char *path) {
     int sock;
     struct sockaddr_un addr;
@@ -22,7 +42,6 @@ int init_unix_socket(const char *path) {
         return -1;
     }
 
-    printf("[MIPD] UNIX socket created: fd=%d\n", sock);
 
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
@@ -48,19 +67,39 @@ int init_unix_socket(const char *path) {
     return sock;
 }
 
-/* Handle incoming UNIX socket connection from upper layer */
+/**
+ * Handle data received from UNIX socket (upper layer application)
+ * ifs: Interface data for sending packets
+ * client_fd: File descriptor of the client connection
+ * debug: Debug flag (currently unused)
+ * 
+ * Reads data from ping client over UNIX socket and processes the request.
+ * 
+ * Message format from client: [dest_mip (1)][ttl (1)][message (variable)]
+ * 
+ * Processing:
+ * 1. Check if destination is a direct neighbor (1-hop away in routing table)
+ * 2. If neighbor: send directly via send_mip_packet()
+ * 3. If not neighbor: queue for forwarding via forward_mip_packet()
+ * 
+ * Special commands:
+ * - First byte 0xFF: Clear ARP cache command
+ * 
+ * Global variables: ifs->pending_pings (may add pending ping if ARP miss)
+ *                   ifs->arp (for neighbor check and cache clear)
+ * Returns: 0 on success, -1 on error or connection close
+ * Error conditions: Read error, invalid message format, queue full
+ */
 int handle_unix_connection(struct ifs_data *ifs, int client_fd, int debug) {
     uint8_t buffer[MAX_SDU_SIZE];
     ssize_t nread = read(client_fd, buffer, sizeof(buffer));
-    printf("[MIPD] Read %ld bytes from client\n", nread);
-    fflush(stdout);
 
     if (nread <= 0) {
         if (nread < 0) {
             if (debug) perror("handle_unix_connection: read");
         } else {
             // nread == 0: Client closed the socket
-            if (debug) printf("[MIPD] Client closed connection (nread == 0). Closing fd %d\n", client_fd);
+            if (debug) printf("[MIPD] Client closed connection. Closing fd %d\n", client_fd);
         }
         close(client_fd);
         return -1;
@@ -68,9 +107,7 @@ int handle_unix_connection(struct ifs_data *ifs, int client_fd, int debug) {
 
     // SPECIAL COMMAND: Check if first byte is 0xFF (clear ARP cache command)
     if (nread == 1 && buffer[0] == 0xFF) {
-        printf("[MIPD] Received ARP cache clear command\n");
         ifs->arp.entry_count = 0;
-        printf("[MIPD] ARP cache cleared (was %d entries, now 0)\n", ifs->arp.entry_count);
         
         // Send acknowledgment back
         uint8_t ack = SDU_TYPE_ARP;
@@ -91,11 +128,8 @@ int handle_unix_connection(struct ifs_data *ifs, int client_fd, int debug) {
     const uint8_t *sdu = buffer + 2;    // Rest is the message
     size_t sdu_len_bytes = nread - 2;
 
-    printf("[MIPD RECV CLIENT] nread = %ld, dest=%d, ttl=%d\n", nread, dest_mip, ttl);
-
-    // Check if destination is local
+    // Check if destination is local (loopback not supported)
     if (dest_mip == ifs->local_mip_addr) {
-        printf("[MIPD] Destination is local (loopback), not implemented\n");
         close(client_fd);
         return -1;
     }
@@ -126,16 +160,8 @@ int handle_unix_connection(struct ifs_data *ifs, int client_fd, int debug) {
     if (sdu_len_bytes > MAX_SDU_SIZE) sdu_len_bytes = MAX_SDU_SIZE;
     memcpy(pending->sdu, sdu, sdu_len_bytes);
     pending->sdu_len = sdu_len_bytes;
-    printf("[PENDING] Added pending EARLY: fd=%d dest=%d total=%d\n",
-           pending->client_fd, pending->dest_mip, ifs->pending_ping_count);
-
-    uint8_t dst_mac[6];
-    int send_if = -1;
-
 
     if (dest_mip == MIP_DEST_ADDR) {
-        printf("[MIPD] Broadcast packet detected (dest=255) - sending on all interfaces\n");
-
         uint8_t eff_ttl = (ttl == 0) ? DEFAULT_TTL : ttl;
 
         for (int i = 0; i < ifs->ifn; i++) {
@@ -143,73 +169,24 @@ int handle_unix_connection(struct ifs_data *ifs, int client_fd, int debug) {
                                      padded_sdu, padded_sdu_len, eff_ttl, 0);
             if (rc < 0) {
                 perror("send_mip_packet: broadcast failed");
-            } else {
-                printf("[MIPD] Broadcast sent on interface %d", i);
             }
         }
         free(padded_sdu);
         return 1;
     }
 
-    /* ARP cache lookup */
-    printf("[MIPD] ********** CHECKING ARP CACHE FOR MIP %d **********\n", dest_mip);
-    printf("[MIPD] ARP cache count=%d\n", ifs->arp.entry_count);
+    /* Always use forwarding engine for non-local destinations */
+    /* The routing daemon will determine if it's a neighbor or multi-hop */
+    printf("\n[MIPD] Received PING from client: MIP %d -> %d (TTL=%d)\n",
+           ifs->local_mip_addr, dest_mip, (ttl == 0) ? DEFAULT_TTL : ttl);
+    printf("[MIPD] Payload: \"%.*s\"\n", (int)sdu_len_bytes, sdu);
+    printf("[MIPD] Forwarding via routing daemon\n");
     
-    // Debug: Print entire ARP cache
-    printf("[MIPD] === ARP CACHE CONTENTS ===\n");
-    for (int i = 0; i < ifs->arp.entry_count; i++) {
-        printf("[MIPD]   [%d] MIP=%d MAC=%02x:%02x:%02x:%02x:%02x:%02x if=%d\n",
-               i, ifs->arp.entries[i].mip_addr,
-               ifs->arp.entries[i].mac_addr[0], ifs->arp.entries[i].mac_addr[1],
-               ifs->arp.entries[i].mac_addr[2], ifs->arp.entries[i].mac_addr[3],
-               ifs->arp.entries[i].mac_addr[4], ifs->arp.entries[i].mac_addr[5],
-               ifs->arp.entries[i].if_index);
-    }
-    printf("[MIPD] === END ARP CACHE ===\n");
+    uint8_t eff_ttl = (ttl == 0) ? DEFAULT_TTL : ttl;
+    forward_mip_packet(ifs, dest_mip, ifs->local_mip_addr, eff_ttl, 
+                      SDU_TYPE_PING, sdu, sdu_len_bytes);
     
-    int arp_found = arp_cache_lookup(ifs->arp.entries, ifs->arp.entry_count,
-                            dest_mip, dst_mac, &send_if);
-
-    printf("[MIPD] ARP lookup result for MIP %d: arp_found=%d\n", dest_mip, arp_found);
-    if (arp_found == 0) {
-        printf("[MIPD] Found in ARP cache: MAC=%02x:%02x:%02x:%02x:%02x:%02x if=%d\n",
-               dst_mac[0], dst_mac[1], dst_mac[2], dst_mac[3], dst_mac[4], dst_mac[5], send_if);
-    }
-    
-    if (arp_found != 0) {
-        // Not in cache: use forwarding engine for multi-hop routing
-        printf("[MIPD] ********** ARP MISS - USING FORWARDING ENGINE **********\n");
-        printf("[MIPD] Calling forward_mip_packet(dest=%d, src=%d, ttl=%d)\n",
-               dest_mip, ifs->local_mip_addr, (ttl == 0) ? DEFAULT_TTL : ttl);
-        
-        uint8_t eff_ttl = (ttl == 0) ? DEFAULT_TTL : ttl;
-        forward_mip_packet(ifs, dest_mip, ifs->local_mip_addr, eff_ttl, 
-                          SDU_TYPE_PING, sdu, sdu_len_bytes);
-        
-        free(padded_sdu);
-        // Keep client connection open for PONG
-        return 1; 
-    } else {
-        printf("[MIPD] ARP CACHE HIT for MIP %d - using cached MAC\n", dest_mip);
-
-        /* Send the MIP packet with specified TTL */
-        printf("[MIPD] Sending MIP packet to MIP %d via interface %d (TTL=%d)\n", 
-               dest_mip, send_if, pending->ttl);
-        int rc = send_mip_packet(ifs, send_if, dest_mip, SDU_TYPE_PING, 
-                                 padded_sdu, padded_sdu_len, pending->ttl, 0);
-    
-        free(padded_sdu);
-
-        if (rc < 0) {
-            perror("handle_unix_connection: send_mip_packet");
-            ifs->pending_ping_count--;
-            close(client_fd);
-            return -1;
-        } else if (debug) {
-            printf("[MIPD] Sent SDU to MIP %u via if %d: %.*s\n",
-                   dest_mip, send_if, (int)sdu_len_bytes, sdu);
-        }
-
-        return 1;
-    }
+    free(padded_sdu);
+    // Keep client connection open for PONG
+    return 1;
 }
